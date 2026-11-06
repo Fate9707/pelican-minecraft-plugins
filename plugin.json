@@ -1,0 +1,22 @@
+{
+    "id": "pelican-minecraft-plugins",
+    "name": "Minecraft Plugins",
+    "author": "Fate Fighter",
+    "version": "1.0.0",
+    "description": "Easily download, update, and manage Minecraft mods and plugins from Modrinth, Hangar, and Spigot",
+    "category": "plugin",
+    "url": "https://shadowcraft.hu",
+    "update_url": "",
+    "namespace": "FateFighter\\MinecraftPlugins",
+    "class": "MinecraftPlugins",
+    "panels": [
+        "server"
+    ],
+    "panel_version": null,
+    "api_version": 1,
+    "composer_packages": null,
+    "meta": {
+        "status": "enabled",
+        "status_message": null
+    }
+}
