@@ -2,7 +2,7 @@
     "id": "pelican-minecraft-plugins",
     "name": "Minecraft Plugins",
     "author": "Fate Fighter",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Easily download, update, and manage Minecraft mods and plugins from Modrinth, Hangar, and Spigot",
     "category": "plugin",
     "url": "https://shadowcraft.hu",
