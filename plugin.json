@@ -6,7 +6,7 @@
     "description": "Easily download, update, and manage Minecraft mods and plugins from Modrinth, Hangar, and Spigot",
     "category": "plugin",
     "url": "https://shadowcraft.hu",
-    "update_url": "",
+    "update_url": " https://hub.pelican.dev/plugins/pelican-minecraft-plugins/update.json",
     "namespace": "FateFighter\\MinecraftPlugins",
     "class": "MinecraftPlugins",
     "panels": [
