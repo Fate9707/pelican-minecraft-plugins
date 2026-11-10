@@ -244,14 +244,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             $fileRepository = app(DaemonFileRepository::class);
 
             $metadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, static::detectProjectType($server));
-            $this->installedPluginsMetadata = array_values(array_filter(
-                $metadata,
-                fn (array $plugin) => $this->usesHangar()
-                    ? str_starts_with($plugin['project_id'] ?? '', 'hangar:')
-                    : ($this->usesSpiget()
-                        ? str_starts_with($plugin['project_id'] ?? '', 'spigot:')
-                        : !str_starts_with($plugin['project_id'] ?? '', 'hangar:') && !str_starts_with($plugin['project_id'] ?? '', 'spigot:'))
-            ));
+            $this->installedPluginsMetadata = $metadata;
         }
 
         return $this->installedPluginsMetadata;
@@ -301,19 +294,51 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** @return array<int, array<string, mixed>> */
     private function getProviderVersions(string $projectId, Server $server): array
     {
-        if ($this->usesHangar()) {
+        if (str_starts_with($projectId, 'hangar:')) {
             $slug = str_starts_with($projectId, 'hangar:') ? substr($projectId, 7) : $projectId;
 
             return app(HangarService::class)->getVersions($slug, $server);
         }
 
-        if ($this->usesSpiget()) {
+        if (str_starts_with($projectId, 'spigot:')) {
             $resourceId = str_starts_with($projectId, 'spigot:') ? substr($projectId, 7) : $projectId;
 
             return app(SpigetService::class)->getVersions($resourceId, $server);
         }
 
         return MinecraftModrinth::getModrinthVersions($projectId, $server, static::detectProjectType($server));
+    }
+
+    private function getAvailableUpdatesCount(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type): int
+    {
+        $installedPlugins = $this->getInstalledPluginsMetadata();
+        $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
+        $files = $fileRepository->setServer($server)->getDirectory($folder);
+        $installedFiles = array_fill_keys(
+            collect($files)
+                ->filter(fn ($file) => isset($file['name']) && str($file['name'])->lower()->endsWith('.jar'))
+                ->pluck('name')
+                ->map(fn (string $filename) => strtolower($filename))
+                ->all(),
+            true
+        );
+
+        $updates = 0;
+        foreach ($installedPlugins as $plugin) {
+            $projectId = (string) ($plugin['project_id'] ?? '');
+            $versionId = (string) ($plugin['version_id'] ?? '');
+            $filename = strtolower((string) ($plugin['filename'] ?? ''));
+            if ($projectId === '' || $versionId === '' || str_starts_with($versionId, 'detected:') || !isset($installedFiles[$filename])) {
+                continue;
+            }
+
+            $versions = $this->getProviderVersions($projectId, $server);
+            if (isset($versions[0]['id']) && $versionId !== (string) $versions[0]['id']) {
+                $updates++;
+            }
+        }
+
+        return $updates;
     }
 
     /** @return array<string, mixed>|null */
@@ -327,36 +352,71 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return null;
         }
 
-        $cacheKey = 'plugin_source_detection:v1:'.$server->id.':'.sha1(strtolower($filename));
-        $candidate = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($server, $projectName, $nameKey) {
-            $matches = [];
-
-            try {
-                $hangarProject = app(HangarService::class)->findProjectByName($server, $projectName);
-                if ($hangarProject) {
-                    $matches[] = $hangarProject;
-                }
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-
-            try {
-                $spigotProject = app(SpigetService::class)->findProjectByName($projectName);
+        $knownSpigotResources = [
+            'chatcolor2' => '22692',
+            'infiniteannouncements' => '71266',
+        ];
+        $knownSpigotResourceId = $knownSpigotResources[$nameKey] ?? null;
+        $cacheKey = 'plugin_source_detection:v3:'.$server->id.':'.sha1(strtolower($filename));
+        $candidate = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($server, $projectName, $nameKey, $knownSpigotResourceId) {
+            if ($knownSpigotResourceId !== null) {
+                $spigotProject = app(SpigetService::class)->findProjectById($knownSpigotResourceId);
                 if ($spigotProject) {
-                    $matches[] = $spigotProject;
+                    $spigotProject['detected_name_key'] = $nameKey;
+
+                    return $spigotProject;
                 }
-            } catch (\Throwable $exception) {
-                report($exception);
             }
 
-            if (count($matches) !== 1) {
-                return ['unknown_source' => true];
+            $aliases = match ($nameKey) {
+                'chatcolor2' => ['ChatColor'],
+                default => [],
+            };
+            $searchNames = array_values(array_unique([$projectName, ...$aliases]));
+
+            foreach ($searchNames as $searchName) {
+                $matches = [];
+
+                try {
+                    $modrinthProject = MinecraftModrinth::findProjectByName(
+                        $server,
+                        $searchName,
+                        static::detectProjectType($server)
+                    );
+                    if ($modrinthProject) {
+                        $matches[] = $modrinthProject;
+                    }
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+
+                try {
+                    $hangarProject = app(HangarService::class)->findProjectByName($server, $searchName);
+                    if ($hangarProject) {
+                        $matches[] = $hangarProject;
+                    }
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+
+                try {
+                    $spigotProject = app(SpigetService::class)->findProjectByName($searchName);
+                    if ($spigotProject) {
+                        $matches[] = $spigotProject;
+                    }
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+
+                if (count($matches) === 1) {
+                    $match = $matches[0];
+                    $match['detected_name_key'] = $nameKey;
+
+                    return $match;
+                }
             }
 
-            $match = $matches[0];
-            $match['detected_name_key'] = $nameKey;
-
-            return $match;
+            return ['unknown_source' => true];
         });
 
         if (!is_array($candidate) || !empty($candidate['unknown_source'])) {
@@ -666,16 +726,69 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     /** @var DaemonFileRepository $fileRepository */
                     $fileRepository = app(DaemonFileRepository::class);
 
-                    if (!$this->usesExternalProvider()) {
-                        $metadataBefore = count($installedPlugins);
-
-                        try {
-                            $this->unknownFiles = MinecraftModrinth::scanAndImportPlugins($server, $fileRepository, static::detectProjectType($server));
-                            $unknownFiles = $this->unknownFiles;
-
+                    try {
+                        $type = static::detectProjectType($server);
+                        if ($type) {
+                            $metadataBefore = count($installedPlugins);
+                            $modrinthUnknownFiles = MinecraftModrinth::scanAndImportPlugins($server, $fileRepository, $type);
                             $this->installedPluginsMetadata = null;
                             $installedPlugins = $this->getInstalledPluginsMetadata();
 
+                            $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
+                            $contents = $fileRepository->setServer($server)->getDirectory($folder);
+                            $knownSpigotNames = ['chatcolor2', 'infiniteannouncements'];
+                            $correctedKnownSource = false;
+                            foreach ($contents as $item) {
+                                if (!is_array($item) || !isset($item['name']) || !str($item['name'])->lower()->endsWith('.jar')) {
+                                    continue;
+                                }
+
+                                $basename = pathinfo($item['name'], PATHINFO_FILENAME);
+                                $normalized = preg_replace('/(?:[-_ ]v?\d+(?:[._-]\d+)*(?:[-+][A-Za-z0-9._-]+)?)$/i', '', $basename) ?: $basename;
+                                $nameKey = preg_replace('/[^a-z0-9]+/', '', strtolower($normalized)) ?? '';
+                                if (in_array($nameKey, $knownSpigotNames, true)
+                                    && $this->discoverInstalledPluginSource($server, $fileRepository, $item['name'])) {
+                                    $correctedKnownSource = true;
+                                }
+                            }
+
+                            if ($correctedKnownSource) {
+                                $this->installedPluginsMetadata = null;
+                                $installedPlugins = $this->getInstalledPluginsMetadata();
+                            }
+
+                            $knownFilenames = array_fill_keys(array_map(
+                                fn (array $plugin) => strtolower($plugin['filename']),
+                                $installedPlugins
+                            ), true);
+                            $unknownFiles = collect($contents)
+                                ->filter(fn ($item) => is_array($item) && isset($item['name']) && str($item['name'])->lower()->endsWith('.jar'))
+                                ->pluck('name')
+                                ->filter(fn (string $filename) => !isset($knownFilenames[strtolower($filename)]))
+                                ->values()
+                                ->all();
+
+                            $identifiedAny = false;
+                            foreach ($unknownFiles as $filename) {
+                                if ($this->discoverInstalledPluginSource($server, $fileRepository, $filename)) {
+                                    $identifiedAny = true;
+                                }
+                            }
+
+                            if ($identifiedAny) {
+                                $this->installedPluginsMetadata = null;
+                                $installedPlugins = $this->getInstalledPluginsMetadata();
+                                $knownFilenames = array_fill_keys(array_map(
+                                    fn (array $plugin) => strtolower($plugin['filename']),
+                                    $installedPlugins
+                                ), true);
+                                $unknownFiles = array_values(array_filter(
+                                    $unknownFiles,
+                                    fn (string $filename) => !isset($knownFilenames[strtolower($filename)])
+                                ));
+                            }
+
+                            $this->unknownFiles = $unknownFiles;
                             $importedCount = max(0, count($installedPlugins) - $metadataBefore);
                             if ($importedCount > 0) {
                                 Notification::make()
@@ -683,65 +796,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                     ->success()
                                     ->send();
                             }
-                        } catch (Exception $exception) {
-                            report($exception);
-
-                            $message = strtolower($exception->getMessage());
-                            if (str_contains($message, 'modrinth')) {
-                                Notification::make()
-                                    ->title(trans('pelican-minecraft-plugins::strings.notifications.scan_failed'))
-                                    ->danger()
-                                    ->send();
-                            }
-
-                            $this->unknownFiles = [];
                         }
-                    } else {
-                        try {
-                            $type = static::detectProjectType($server);
-                            if ($type) {
-                                $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
-                                $contents = $fileRepository->setServer($server)->getDirectory($folder);
-                                $allMetadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, $type);
-                                $knownFilenames = array_fill_keys(array_map(
-                                    fn (array $plugin) => strtolower($plugin['filename']),
-                                    $allMetadata
-                                ), true);
-                                $unknownFiles = collect($contents)
-                                    ->filter(fn ($item) => is_array($item) && isset($item['name']) && str($item['name'])->lower()->endsWith('.jar'))
-                                    ->pluck('name')
-                                    ->filter(fn (string $filename) => !isset($knownFilenames[strtolower($filename)]))
-                                    ->values()
-                                    ->all();
-
-                                $identifiedAny = false;
-                                foreach ($unknownFiles as $filename) {
-                                    if ($this->discoverInstalledPluginSource($server, $fileRepository, $filename)) {
-                                        $identifiedAny = true;
-                                    }
-                                }
-
-                                if ($identifiedAny) {
-                                    $this->installedPluginsMetadata = null;
-                                    $installedPlugins = $this->getInstalledPluginsMetadata();
-                                    $allMetadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, $type);
-                                    $knownFilenames = array_fill_keys(array_map(
-                                        fn (array $plugin) => strtolower($plugin['filename']),
-                                        $allMetadata
-                                    ), true);
-                                    $unknownFiles = array_values(array_filter(
-                                        $unknownFiles,
-                                        fn (string $filename) => !isset($knownFilenames[strtolower($filename)])
-                                    ));
-                                }
-
-                                $this->unknownFiles = $unknownFiles;
-                            }
-                        } catch (Exception $exception) {
-                            report($exception);
-                            $unknownFiles = [];
-                            $this->unknownFiles = [];
-                        }
+                    } catch (Exception $exception) {
+                        report($exception);
+                        $unknownFiles = $modrinthUnknownFiles ?? [];
+                        $this->unknownFiles = $unknownFiles;
                     }
 
                     if ($search) {
@@ -755,31 +814,45 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }
 
                     $projects = [];
-                    if ($this->usesExternalProvider()) {
-                        foreach ($installedPlugins as $plugin) {
-                            $isSpigot = $this->usesSpiget();
-                            $projects[] = [
-                                'project_id' => $plugin['project_id'],
-                                'slug' => $plugin['project_slug'],
-                                'hangar_path' => trim(($plugin['author'] ?? '').'/'.$plugin['project_slug'], '/'),
-                                'spigot_resource_id' => $isSpigot ? (substr((string) $plugin['project_id'], 7)) : null,
-                                'title' => $plugin['project_title'],
-                                'description' => trans($isSpigot
-                                    ? 'pelican-minecraft-plugins::strings.badges.source_spigot'
-                                    : 'pelican-minecraft-plugins::strings.badges.source_hangar'),
-                                'icon_url' => null,
-                                'author' => $plugin['author'] ?? '',
-                                'downloads' => null,
-                                'date_modified' => $plugin['installed_at'] ?? null,
-                                'project_type' => 'plugin',
-                                'provider' => $isSpigot ? 'spigot' : 'hangar',
-                            ];
-                        }
-                    } elseif (!empty($installedPlugins)) {
-                        $installedPages = (int) ceil(count($installedPlugins) / $perPage);
+                    $modrinthPlugins = array_values(array_filter(
+                        $installedPlugins,
+                        fn (array $plugin) => !str_starts_with((string) $plugin['project_id'], 'hangar:')
+                            && !str_starts_with((string) $plugin['project_id'], 'spigot:')
+                    ));
+                    if ($modrinthPlugins !== []) {
+                        $installedPages = (int) ceil(count($modrinthPlugins) / $perPage);
                         for ($installedPage = 1; $installedPage <= $installedPages; $installedPage++) {
-                            $projects = array_merge($projects, MinecraftModrinth::getInstalledPluginsFromModrinth($installedPlugins, $installedPage));
+                            $projects = array_merge($projects, MinecraftModrinth::getInstalledPluginsFromModrinth($modrinthPlugins, $installedPage));
                         }
+                    }
+
+                    foreach ($installedPlugins as $plugin) {
+                        $projectId = (string) $plugin['project_id'];
+                        $provider = str_starts_with($projectId, 'hangar:')
+                            ? 'hangar'
+                            : (str_starts_with($projectId, 'spigot:') ? 'spigot' : 'modrinth');
+                        if ($provider === 'modrinth') {
+                            continue;
+                        }
+
+                        $details = $provider === 'hangar'
+                            ? app(HangarService::class)->findProjectByName($server, (string) $plugin['project_title'])
+                            : app(SpigetService::class)->findProjectById(substr($projectId, 7));
+                        $projects[] = array_merge($details ?? [], [
+                            'project_id' => $projectId,
+                            'slug' => $plugin['project_slug'],
+                            'title' => $plugin['project_title'],
+                            'author' => $plugin['author'] ?? ($details['author'] ?? ''),
+                            'description' => $details['description'] ?? '',
+                            'icon_url' => $details['icon_url'] ?? null,
+                            'downloads' => $details['downloads'] ?? null,
+                            'date_modified' => $details['date_modified'] ?? $plugin['installed_at'],
+                            'project_type' => 'plugin',
+                            'provider' => $provider,
+                            'hangar_path' => $details['hangar_path'] ?? trim(($plugin['author'] ?? '').'/'.$plugin['project_slug'], '/'),
+                            'spigot_resource_id' => $provider === 'spigot' ? substr($projectId, 7) : null,
+                            'source_label' => trans('pelican-minecraft-plugins::strings.badges.source_'.$provider),
+                        ]);
                     }
 
                     foreach ($unknownFiles as $filename) {
@@ -793,7 +866,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             'downloads' => null,
                             'date_modified' => null,
                             'not_on_modrinth' => true,
-                            'unknown_source' => $this->usesExternalProvider(),
+                            'unknown_source' => true,
                         ];
                     }
 
@@ -842,19 +915,44 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 : 'pelican-minecraft-plugins::strings.badges.not_tracked');
                         }
 
-                        $description = $record['description'] ?? null;
-                        if (!is_string($description)) {
+                        $description = $record['description'] ?? '';
+                        $description = is_string($description) && $description !== ''
+                            ? ((strlen($description) > 120) ? substr($description, 0, 120).'...' : $description)
+                            : '';
+
+                        return $description !== '' ? $description : null;
+                    }),
+                TextColumn::make('provider')
+                    ->label('')
+                    ->state(function (array $record) {
+                        if (!empty($record['not_on_modrinth'])) {
                             return null;
                         }
 
-                        return (strlen($description) > 120) ? substr($description, 0, 120).'...' : $description;
-                    }),
+                        $projectId = (string) ($record['project_id'] ?? '');
+
+                        return str_starts_with($projectId, 'hangar:')
+                            ? 'hangar'
+                            : (str_starts_with($projectId, 'spigot:') ? 'spigot' : 'modrinth');
+                    })
+                    ->formatStateUsing(fn ($state) => $state
+                        ? trans('pelican-minecraft-plugins::strings.badges.source_'.$state)
+                        : null)
+                    ->badge()
+                    ->width('6rem')
+                    ->color(fn ($state) => match ($state) {
+                        'modrinth' => 'success',
+                        'hangar' => 'info',
+                        'spigot' => 'warning',
+                        default => 'gray',
+                    })
+                    ->visible(fn () => $this->activeTab === 'installed'),
                 TextColumn::make('author')
-                    ->url(fn ($state, array $record) => $this->usesHangar()
-                        ? "https://hangar.papermc.io/{$state}"
-                        : ($this->usesSpiget()
-                            ? 'https://www.spigotmc.org/resources/'.($record['spigot_resource_id'] ?? '').'/'
-                            : "https://modrinth.com/user/{$state}"), true)
+                    ->url(fn ($state, array $record) => match ($record['provider'] ?? 'modrinth') {
+                        'hangar' => "https://hangar.papermc.io/{$record['hangar_path']}",
+                        'spigot' => 'https://www.spigotmc.org/resources/'.($record['spigot_resource_id'] ?? '').'/',
+                        default => "https://modrinth.com/user/{$state}",
+                    }, true)
                     ->toggleable(),
                 TextColumn::make('downloads')
                     ->icon('tabler-download')
@@ -875,13 +973,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 $server = Filament::getTenant();
                 $projectType = static::detectProjectType($server)?->value ?? $record['project_type'];
 
-                if ($this->usesHangar()) {
+                if (($record['provider'] ?? null) === 'hangar') {
                     $path = $record['hangar_path'] ?? trim(($record['author'] ?? '').'/'.$record['slug'], '/');
 
                     return 'https://hangar.papermc.io/'.$path;
                 }
 
-                if ($this->usesSpiget()) {
+                if (($record['provider'] ?? null) === 'spigot') {
                     $resourceId = $record['spigot_resource_id'] ?? substr((string) ($record['project_id'] ?? ''), 7);
 
                     return 'https://www.spigotmc.org/resources/'.$resourceId.'/';
@@ -1436,6 +1534,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 ? 'offline'
                 : 'pending');
         $installedCount = 0;
+        $availableUpdatesCount = 0;
         $pluginFolder = $type?->getFolder($server) ?? 'plugins';
 
         try {
@@ -1447,6 +1546,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             $installedCount = collect($files)
                 ->filter(fn ($file) => isset($file['name']) && str($file['name'])->lower()->endsWith($extension))
                 ->count();
+
+            $availableUpdatesCount = $this->getAvailableUpdatesCount($server, $fileRepository, $type);
         } catch (Exception $exception) {
             report($exception);
         }
@@ -1460,6 +1561,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         'loader' => $loader,
                         'minecraftVersion' => $minecraftVersion,
                         'installedCount' => $installedCount,
+                        'availableUpdatesCount' => $availableUpdatesCount,
                         'source' => $this->source,
                         'activeTab' => $this->activeTab,
                         'updatesOnly' => $this->updatesOnly,
@@ -1482,6 +1584,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 'loader' => $loader,
                                 'minecraftVersion' => $minecraftVersion,
                                 'installedCount' => $installedCount,
+                                'availableUpdatesCount' => $availableUpdatesCount,
                                 'pluginFolder' => $pluginFolder,
                                 'serverStatus' => $serverStatus,
                                 'serverOnline' => $serverOnline,

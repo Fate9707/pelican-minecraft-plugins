@@ -79,6 +79,51 @@ class MinecraftModrinthService
         });
     }
 
+    /** @return array<string, mixed>|null */
+    public function findProjectByName(Server $server, string $name, ?ModrinthProjectType $type = null): ?array
+    {
+        $expected = preg_replace('/[^a-z0-9]+/', '', strtolower(trim($name))) ?? '';
+        if ($expected === '') {
+            return null;
+        }
+
+        $projects = Cache::remember('modrinth_find_name:'.md5($expected), now()->addMinutes(10), function () use ($name, $type, $server) {
+            try {
+                return Http::asJson()
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->get('https://api.modrinth.com/v2/search', [
+                        'query' => $name,
+                        'limit' => 20,
+                        'facets' => '[ ["project_type:'.($type?->value ?? ModrinthProjectType::fromServer($server)?->value ?? 'plugin').'" ] ]',
+                    ])
+                    ->json();
+            } catch (Exception $exception) {
+                report($exception);
+
+                return ['hits' => []];
+            }
+        });
+        foreach (is_array($projects) ? ($projects['hits'] ?? []) : [] as $project) {
+            if (!is_array($project)) {
+                continue;
+            }
+
+            $title = preg_replace('/[^a-z0-9]+/', '', strtolower((string) ($project['title'] ?? ''))) ?? '';
+            $slug = preg_replace('/[^a-z0-9]+/', '', strtolower((string) ($project['slug'] ?? ''))) ?? '';
+            if ($title !== $expected && $slug !== $expected) {
+                continue;
+            }
+
+            $project['provider'] = 'modrinth';
+
+            return $project;
+        }
+
+        return null;
+    }
+
     /**
      * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedPlugins
      * @return array<int, array<string, mixed>>
@@ -147,6 +192,7 @@ class MinecraftModrinthService
             if (isset($modrinthMap[$projectId])) {
                 $project = $modrinthMap[$projectId];
                 $project['project_id'] = $project['id'];
+                $project['provider'] = 'modrinth';
                 if (isset($project['updated']) && !isset($project['date_modified'])) {
                     $project['date_modified'] = $project['updated'];
                 }
@@ -166,6 +212,7 @@ class MinecraftModrinthService
                     'date_modified' => $installedPlugin['installed_at'],
                     'project_type' => '',
                     'unavailable' => true,
+                    'provider' => 'modrinth',
                 ];
             }
         }

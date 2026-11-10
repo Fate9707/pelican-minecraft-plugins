@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Http;
 class SpigetService
 {
     private const API = 'https://api.spiget.org/v2';
-    private const RESOURCE_FIELDS = 'id,name,tag,author,downloads,releaseDate,updateDate,testedVersions,icon,premium,external';
+    private const RESOURCE_FIELDS = 'id,name,tag,description,author,downloads,releaseDate,updateDate,testedVersions,icon,premium,external';
 
     /** @return array<string, mixed>|null */
     public function findProjectByName(string $name): ?array
@@ -20,7 +20,7 @@ class SpigetService
             return null;
         }
 
-        $cacheKey = 'spiget_find_project:'.md5($expected);
+        $cacheKey = 'spiget_find_project:v3:'.md5($expected);
         $project = cache()->remember($cacheKey, now()->addMinutes(10), function () use ($name, $expected) {
             try {
                 $response = Http::acceptJson()
@@ -51,6 +51,35 @@ class SpigetService
         return is_array($project) && !empty($project['project_id']) ? $project : null;
     }
 
+    /** @return array<string, mixed>|null */
+    public function findProjectById(string $resourceId): ?array
+    {
+        if (!ctype_digit($resourceId)) {
+            return null;
+        }
+
+        $cacheKey = 'spiget_find_project_id:v4:'.$resourceId;
+        $project = cache()->remember($cacheKey, now()->addMinutes(30), function () use ($resourceId) {
+            try {
+                $resource = Http::acceptJson()
+                    ->withUserAgent('pelican-minecraft-plugins')
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->get(self::API.'/resources/'.$resourceId)
+                    ->json();
+
+                return is_array($resource) ? $this->normalizeProject($resource) : [];
+            } catch (\Throwable $exception) {
+                report($exception);
+
+                return [];
+            }
+        });
+
+        return is_array($project) && !empty($project['project_id']) ? $project : null;
+    }
+
     private function normalizeProjectName(string $name): string
     {
         return preg_replace('/[^a-z0-9]+/', '', strtolower($name)) ?? '';
@@ -66,8 +95,8 @@ class SpigetService
 
         $query = trim((string) $search);
         $cacheSuffix = md5(json_encode([$minecraftVersion, $page, $query]));
-        $cacheKey = 'spiget_projects:v6:'.$cacheSuffix;
-        $staleCacheKey = 'spiget_projects_stale:v1:'.$cacheSuffix;
+        $cacheKey = 'spiget_projects:v8:'.$cacheSuffix;
+        $staleCacheKey = 'spiget_projects_stale:v3:'.$cacheSuffix;
 
         return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($minecraftVersion, $page, $query, $staleCacheKey) {
             try {
@@ -416,16 +445,34 @@ class SpigetService
         $author = $author ?: ($authorId !== null
             ? cache()->get('spiget_author:'.(string) $authorId, (string) $authorId)
             : '');
-        $iconPath = $resource['icon']['url'] ?? null;
+        $iconData = $resource['icon'] ?? null;
+        $iconPath = is_array($iconData) ? ($iconData['url'] ?? null) : $iconData;
         $iconUrl = is_string($iconPath) && $iconPath !== ''
-            ? (str_starts_with($iconPath, 'https://') ? $iconPath : 'https://www.spigotmc.org/'.ltrim($iconPath, '/'))
+            ? (str_starts_with($iconPath, 'http') ? $iconPath : 'https://www.spigotmc.org/'.ltrim($iconPath, '/'))
             : null;
+        if ($iconUrl === null && $id !== '') {
+            $iconUrl = 'https://www.spigotmc.org/data/resource_icons/'.substr($id, 0, 3).'/'.$id.'.jpg';
+        }
+        $tag = trim(html_entity_decode(strip_tags((string) ($resource['tag'] ?? '')), ENT_QUOTES | ENT_HTML5));
+        $description = $tag;
+
+        if ($description === '') {
+            $description = trim((string) ($resource['description'] ?? ''));
+            $decodedDescription = $description !== '' ? base64_decode($description, true) : false;
+            if (is_string($decodedDescription) && preg_match('/^\s*<(?:[a-z!\/])/i', $decodedDescription) === 1) {
+                $description = $decodedDescription;
+            }
+
+            $description = trim(html_entity_decode(strip_tags($description), ENT_QUOTES | ENT_HTML5));
+        }
+
+        $description = trim(preg_replace('/\s+/', ' ', $description) ?? '');
 
         return [
             'project_id' => 'spigot:'.$id,
             'slug' => str($title)->slug()->toString(),
             'title' => $title,
-            'description' => (string) ($resource['tag'] ?? ''),
+            'description' => $description,
             'icon_url' => $iconUrl,
             'author' => (string) $author,
             'downloads' => (int) ($resource['downloads'] ?? $resource['stats']['downloads'] ?? $resource['downloadCount'] ?? 0),

@@ -71,8 +71,9 @@ return [
         'not_on_modrinth' => 'Not on Modrinth',
         'not_tracked' => 'Not tracked by this source',
         'unknown_source' => 'Source could not be identified',
-        'source_hangar' => 'Source: Hangar',
-        'source_spigot' => 'Source: Spigot',
+        'source_modrinth' => 'Modrinth',
+        'source_hangar' => 'Hangar',
+        'source_spigot' => 'Spigot',
     ],
 
     'modals' => [

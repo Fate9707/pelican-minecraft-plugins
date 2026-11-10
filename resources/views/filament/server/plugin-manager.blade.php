@@ -2,7 +2,7 @@
     $pluginServer = $type === \FateFighter\MinecraftPlugins\Enums\ModrinthProjectType::Plugin;
 @endphp
 
-<div class="plugin-manager-shell">
+<div class="plugin-manager-shell" data-active-tab="{{ $activeTab }}">
     <style>
         .plugin-manager-shell { --pm-border:rgba(120,145,190,.2); --pm-muted:#aab4c9; --pm-text:#f5f7ff; color:var(--pm-text); margin:-1rem; padding:1rem; border-radius:1.1rem; background:radial-gradient(ellipse at 76% 0%,rgba(50,85,115,.2),transparent 42%),linear-gradient(145deg,#0d121e,#080b13); }
         .plugin-manager-shell *,.pm-aside * { box-sizing:border-box; }
@@ -21,6 +21,7 @@
         html:not(.dark) .fi-page:has(.plugin-manager-shell){--pm-surface:#fff;--pm-input:#fff;--pm-text:var(--gray-950,#0f172a);--pm-muted:var(--gray-600,#475569);--pm-border:var(--gray-200,#e2e8f0);--pm-row-bg:#fff;--pm-row-border:var(--gray-200,#e2e8f0);--pm-shadow:0 12px 30px rgba(15,23,42,.06)}html.dark .fi-page:has(.plugin-manager-shell){--pm-surface:#18181b;--pm-input:#202023;--pm-text:#fafafa;--pm-muted:#a1a1aa;--pm-border:#27272a;--pm-row-bg:#18181b;--pm-row-border:#27272a;--pm-shadow:0 8px 24px rgba(0,0,0,.16)}
         .pm-aside .pm-aside-title{color:var(--pm-text)}.plugin-manager-shell .pm-status,.pm-aside .pm-status{background:var(--pm-success-soft);color:var(--pm-success)}.plugin-manager-shell .pm-status.offline,.pm-aside .pm-status.offline{background:color-mix(in srgb,var(--danger-500,#ef4444) 14%,transparent);color:var(--danger-600,#dc2626)}.plugin-manager-shell .pm-status.pending,.pm-aside .pm-status.pending{background:color-mix(in srgb,var(--warning-500,#f59e0b) 15%,transparent);color:var(--warning-600,#d97706)}
         .fi-page:has(.plugin-manager-shell) .fi-ta-ctn{border-color:var(--pm-border);background:var(--pm-surface);box-shadow:var(--pm-shadow)}.fi-page:has(.plugin-manager-shell) .fi-ta-search-field input{border-color:var(--pm-border);background:var(--pm-input);color:var(--pm-text)}.fi-page:has(.plugin-manager-shell) .fi-ta-row{background:var(--pm-row-bg)}.fi-page:has(.plugin-manager-shell) .fi-ta-row td{border-top-color:var(--pm-row-border);border-bottom-color:var(--pm-row-border)}.fi-page:has(.plugin-manager-shell) .fi-ta-row td:first-child{border-left-color:var(--pm-row-border)}.fi-page:has(.plugin-manager-shell) .fi-ta-row td:last-child{border-right-color:var(--pm-row-border)}.fi-page:has(.plugin-manager-shell) .fi-ta-text-item-label{color:var(--pm-text)}.fi-page:has(.plugin-manager-shell) .fi-ta-text-item-description{color:var(--pm-muted)}.fi-page:has(.plugin-manager-shell) .fi-ta-empty-state{color:var(--pm-muted)}.fi-page:has(.plugin-manager-shell) .fi-tabs{border-color:var(--pm-border);background:var(--pm-surface)}
+        .fi-page:has(.plugin-manager-shell[data-active-tab="installed"]) .fi-ta-row td:nth-child(3){display:table-cell!important;width:6rem!important;white-space:nowrap;text-align:center}.fi-page:has(.plugin-manager-shell[data-active-tab="installed"]) .fi-ta-row td:nth-child(4){display:none}.fi-page:has(.plugin-manager-shell[data-active-tab="installed"]) .fi-ta-row td:nth-child(6){width:8rem;white-space:nowrap}
         @media(max-width:850px){.pm-aside{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.plugin-manager-shell{margin:-.75rem;padding:.65rem}.pm-hero{flex-direction:column;padding:1rem}.pm-server-pill{width:100%}.pm-providers{grid-template-columns:1fr}.pm-provider{min-height:4.5rem;flex-direction:row;justify-content:flex-start;padding:0 1rem}.pm-provider-mark{width:2.2rem}.pm-provider-check{top:50%;transform:translateY(-50%)}.pm-provider-desc{margin-left:auto;margin-right:1.6rem}.pm-aside{grid-template-columns:1fr}}
     </style>
 
@@ -31,10 +32,10 @@
     <nav class="pm-tabs" aria-label="{{ trans('pelican-minecraft-plugins::strings.page.manager_title') }}">
         <button type="button" class="pm-tab {{ $activeTab === 'all' ? 'active' : '' }}" wire:click="showAllPlugins">⌄ {{ trans('pelican-minecraft-plugins::strings.actions.install') }}</button>
         <button type="button" class="pm-tab {{ $activeTab === 'installed' && !$updatesOnly ? 'active' : '' }}" wire:click="showInstalledPlugins">✓ {{ trans('pelican-minecraft-plugins::strings.page.view_installed') }} <span class="pm-tab-count">{{ $installedCount }}</span></button>
-        <button type="button" class="pm-tab {{ $updatesOnly ? 'active' : '' }}" wire:click="showPluginUpdates">↻ {{ trans('pelican-minecraft-plugins::strings.page.updates') }}</button>
+        <button type="button" class="pm-tab {{ $updatesOnly ? 'active' : '' }}" wire:click="showPluginUpdates">↻ {{ trans('pelican-minecraft-plugins::strings.page.updates') }} <span class="pm-tab-count">{{ $availableUpdatesCount ?? 0 }}</span></button>
     </nav>
     <section class="pm-main">
-        @if ($pluginServer)
+        @if ($pluginServer && $activeTab !== 'installed')
             <div class="pm-providers" role="group" aria-label="{{ trans('pelican-minecraft-plugins::strings.page.sources') }}">
                 <button type="button" class="pm-provider modrinth {{ $source === 'modrinth' ? 'selected' : '' }}" wire:click="switchSource('modrinth')"><span class="pm-provider-mark">◉</span><span class="pm-provider-name">Modrinth</span><span class="pm-provider-desc">{{ trans('pelican-minecraft-plugins::strings.page.modrinth_description') }}</span><span class="pm-provider-check">{{ $source === 'modrinth' ? '✓' : '' }}</span></button>
                 <button type="button" class="pm-provider hangar {{ $source === 'hangar' ? 'selected hangar' : '' }}" wire:click="switchSource('hangar')"><span class="pm-provider-mark">➤</span><span class="pm-provider-name">Hangar</span><span class="pm-provider-desc">{{ trans('pelican-minecraft-plugins::strings.page.hangar_description') }}</span><span class="pm-provider-check">{{ $source === 'hangar' ? '✓' : '' }}</span></button>
@@ -44,7 +45,9 @@
         <div class="pm-filterbar">
             <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.version') }}:</strong><span>{{ $minecraftVersion ?? trans('pelican-minecraft-plugins::strings.page.unknown') }}</span></span>
             <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.server_type') }}:</strong><span>{{ $loader?->getLabel() ?? trans('pelican-minecraft-plugins::strings.page.unknown') }}</span></span>
-            <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.source') }}:</strong><span>{{ ucfirst($source) }}</span></span>
+            @if ($activeTab !== 'installed')
+                <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.source') }}:</strong><span>{{ ucfirst($source) }}</span></span>
+            @endif
         </div>
     </section>
 </div>

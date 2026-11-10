@@ -16,13 +16,55 @@ class HangarService
             return null;
         }
 
-        foreach ($this->getProjects($server, 1, $name)['hits'] as $project) {
-            if ($this->normalizeProjectName((string) ($project['title'] ?? '')) === $expected) {
-                return $project;
-            }
-        }
+        $cacheKey = 'hangar_find_project:'.md5($expected);
 
-        return null;
+        return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($name, $expected) {
+            try {
+                $response = Http::acceptJson()
+                    ->withUserAgent('pelican-minecraft-plugins')
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->get('https://hangar.papermc.io/api/v1/projects', [
+                        'limit' => 20,
+                        'offset' => 0,
+                        'query' => trim($name),
+                    ])
+                    ->json();
+
+                if (!is_array($response)) {
+                    return null;
+                }
+
+                foreach ($response['result'] ?? [] as $project) {
+                    if (!is_array($project) || $this->normalizeProjectName((string) ($project['name'] ?? '')) !== $expected) {
+                        continue;
+                    }
+
+                    $namespace = $project['namespace'] ?? [];
+                    $slug = $namespace['slug'] ?? $project['slug'] ?? $project['name'];
+                    $owner = $namespace['owner'] ?? $project['owner'] ?? '';
+
+                    return [
+                        'project_id' => 'hangar:'.$slug,
+                        'slug' => (string) $slug,
+                        'hangar_path' => trim($owner.'/'.$slug, '/'),
+                        'title' => $project['name'],
+                        'description' => $project['description'] ?? '',
+                        'icon_url' => $project['avatarUrl'] ?? null,
+                        'author' => $owner,
+                        'downloads' => $project['stats']['downloads'] ?? 0,
+                        'date_modified' => $project['lastUpdated'] ?? $project['createdAt'] ?? null,
+                        'project_type' => 'plugin',
+                        'provider' => 'hangar',
+                    ];
+                }
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+
+            return null;
+        });
     }
 
     private function normalizeProjectName(string $name): string

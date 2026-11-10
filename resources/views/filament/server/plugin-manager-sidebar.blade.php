@@ -25,7 +25,7 @@
     </section>
     <section class="pm-aside-card">
         <div class="pm-stat"><span class="pm-stat-icon"><svg viewBox="0 0 24 24" fill="none"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v10" stroke="currentColor" stroke-width="1.8"/></svg></span>{{ trans('pelican-minecraft-plugins::strings.page.total_plugins') }}<strong>{{ $installedCount }}</strong></div>
-        <div class="pm-stat"><span class="pm-stat-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v18m-7-7 7 7 7-7M5 7l7-4 7 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{ trans('pelican-minecraft-plugins::strings.page.available_updates') }}<strong>—</strong></div>
+        <div class="pm-stat"><span class="pm-stat-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v18m-7-7 7 7 7-7M5 7l7-4 7 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{ trans('pelican-minecraft-plugins::strings.page.available_updates') }}<strong>{{ $availableUpdatesCount ?? 0 }}</strong></div>
         <div class="pm-stat"><span class="pm-stat-icon"><svg viewBox="0 0 24 24" fill="none"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" stroke="currentColor" stroke-width="1.8"/></svg></span>{{ trans('pelican-minecraft-plugins::strings.page.supported_sources') }}<strong>{{ $type === \FateFighter\MinecraftPlugins\Enums\ModrinthProjectType::Plugin ? 3 : 1 }}</strong></div>
     </section>
 </aside>

@@ -71,8 +71,9 @@ return [
         'not_on_modrinth' => 'Nincs a Modrinthen',
         'not_tracked' => 'Nincs követve ezen a forráson',
         'unknown_source' => 'A forrás nem azonosítható',
-        'source_hangar' => 'Forrás: Hangar',
-        'source_spigot' => 'Forrás: Spigot',
+        'source_modrinth' => 'Modrinth',
+        'source_hangar' => 'Hangar',
+        'source_spigot' => 'Spigot',
     ],
 
     'modals' => [
