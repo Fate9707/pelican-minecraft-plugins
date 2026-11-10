@@ -8,10 +8,6 @@ use Filament\Support\Contracts\HasLabel;
 
 enum MinecraftLoader: string implements HasIcon, HasLabel
 {
-    case NeoForge = 'neoforge';
-    case Forge = 'forge';
-    case Fabric = 'fabric';
-    case Quilt = 'quilt';
     case Folia = 'folia';
     case Purpur = 'purpur';
     case Paper = 'paper';
@@ -30,10 +26,6 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
     public function getIcon(): string
     {
         return match ($this) {
-            self::NeoForge => 'mcloader-neoforge',
-            self::Forge => 'mcloader-forge',
-            self::Fabric => 'mcloader-fabric',
-            self::Quilt => 'mcloader-quilt',
             self::Folia => 'mcloader-folia',
             self::Purpur => 'mcloader-purpur',
             self::Paper => 'mcloader-paper',
@@ -65,14 +57,7 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
     {
         $tags = array_map(static fn (string $tag) => strtolower(trim($tag)), $tags);
 
-        if (in_array('neoforge', $tags, true) || in_array('neoforged', $tags, true)) {
-            return self::NeoForge;
-        }
-
         foreach ([
-            self::Forge,
-            self::Fabric,
-            self::Quilt,
             self::Folia,
             self::Purpur,
             self::Paper,
@@ -96,10 +81,6 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
         $name = strtolower($name);
 
         return match (true) {
-            str_contains($name, 'neoforge') => self::NeoForge,
-            str_contains($name, 'forge') => self::Forge,
-            str_contains($name, 'fabric') => self::Fabric,
-            str_contains($name, 'quilt') => self::Quilt,
             str_contains($name, 'folia') => self::Folia,
             str_contains($name, 'purpur') => self::Purpur,
             str_contains($name, 'paper'), str_contains($name, 'leaf') => self::Paper,
