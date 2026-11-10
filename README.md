@@ -1,26 +1,21 @@
-# Minecraft Plugins for Pelican
+# Minecraft Plugin Manager for Pelican
 
-A Pelican Panel server plugin for discovering, installing, updating, and managing Minecraft mods, plugins, and datapacks from Modrinth, Hangar, and Spigot.
+Manage Minecraft server plugins from the Pelican Panel. Find a plugin, compare compatible releases, and install or update it without handling the download manually.
 
-## Features
+## Plugin sources
 
-- Search and browse projects from Modrinth, Hangar, and Spigot.
-- Filter available releases against the server's Minecraft version and supported platform where the provider supplies that information.
-- Install, update, and manage supported Minecraft server add-ons from the server panel.
-- Browse Modrinth mods, plugins, and datapacks when the server egg exposes the matching feature.
+- **Modrinth** — search plugin projects and choose a release that matches the server.
+- **Hangar** — browse Paper ecosystem plugins and their available versions.
+- **Spigot** — look up Spigot resources and install supported releases.
 
-## Setup
+## Using the plugin
 
-For Modrinth project types, enable the matching egg feature: `modrinth_mods`, `modrinth_plugins`, or optionally `modrinth_datapacks`. The egg should include the `minecraft` tag and a loader tag supported by the server, such as `paper`, `fabric`, `forge`, or `neoforge`.
+Install this package in Pelican's Plugin Manager, then open the plugin management page for a Minecraft server. The server egg must identify the server as Minecraft and expose plugin support. For Modrinth, enable the `modrinth_plugins` egg feature (or the Minecraft `plugins` feature).
 
-Install the plugin through Pelican's plugin manager. The repository's `plugin.json` contains the plugin identifier and loader metadata.
+The manager presents plugins available for that server and provides actions to install, update, and remove supported entries. Version compatibility depends on the information supplied by each source.
 
-## Project history and attribution
-
-This is a derivative project. Its Modrinth implementation is based on [YONN2222/pelican-minecraft-modrinth](https://github.com/YONN2222/pelican-minecraft-modrinth), which credits [H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management) and [pelican-dev/plugins](https://github.com/pelican-dev/plugins) as upstream sources.
-
-This repository retains and adapts that Modrinth code and adds Hangar and Spigot provider integrations, Hungarian translations, and project-specific panel integration. It does not claim the inherited implementation as entirely original. The upstream license is included in [LICENSE](LICENSE), with source details in [NOTICE.md](NOTICE.md).
+This project manages **server plugins**. It is not a client mod or datapack manager.
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+GNU General Public License v3.0.
