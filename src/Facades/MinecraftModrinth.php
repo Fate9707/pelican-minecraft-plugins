@@ -15,7 +15,6 @@ use Illuminate\Support\Facades\Facade;
  * @method static array<int, mixed> getModrinthVersions(string $projectId, Server $server)
  * @method static string getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null)
  * @method static string getProjectFolder(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null)
- * @method static string getDatapackWorldName(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository)
  *
  * @see MinecraftModrinthService
  */

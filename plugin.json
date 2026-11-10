@@ -3,7 +3,7 @@
     "name": "Minecraft Plugins",
     "author": "Fate Fighter",
     "version": "1.0.1",
-    "description": "Easily download, update, and manage Minecraft mods and plugins from Modrinth, Hangar, and Spigot",
+    "description": "Find, install, update, and manage Minecraft server plugins from Modrinth, Hangar, and Spigot",
     "category": "plugin",
     "url": "https://shadowcraft.hu",
     "update_url": "https://hub.pelican.dev/plugins/pelican-minecraft-plugins/update.json",

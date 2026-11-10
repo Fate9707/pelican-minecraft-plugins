@@ -11,9 +11,6 @@ use Illuminate\Support\Facades\Http;
 
 class MinecraftModrinthService
 {
-    /** @var array<int, array<string, string>|null> */
-    protected array $serverPropertiesCache = [];
-
     public function getMinecraftVersion(Server $server): ?string
     {
         $version = $server->variables()->where(fn ($builder) => $builder->where('env_variable', 'MINECRAFT_VERSION')->orWhere('env_variable', 'MC_VERSION'))->first()?->server_value;
@@ -41,9 +38,7 @@ class MinecraftModrinthService
         $projectType = $type->value;
         $minecraftVersion = $this->getMinecraftVersion($server);
 
-        if ($type === ModrinthProjectType::Datapack) {
-            $facets = "[[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
-        } elseif (!$minecraftLoader) {
+        if (!$minecraftLoader) {
             // Keep discovery usable even when the egg does not expose its loader.
             // Installation/version selection still needs a detected loader.
             $facets = "[[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
@@ -57,7 +52,7 @@ class MinecraftModrinthService
             'facets' => $facets,
         ];
 
-        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'datapack') . ":$page";
+        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'unknown') . ":$page";
 
         if ($search) {
             $data['query'] = $search;
@@ -85,16 +80,16 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
+     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedPlugins
      * @return array<int, array<string, mixed>>
      */
-    public function getInstalledModsFromModrinth(array $installedMods, int $page = 1): array
+    public function getInstalledPluginsFromModrinth(array $installedPlugins, int $page = 1): array
     {
-        if (empty($installedMods)) {
+        if (empty($installedPlugins)) {
             return [];
         }
 
-        $projectIds = collect($installedMods)->pluck('project_id')->unique()->values()->all();
+        $projectIds = collect($installedPlugins)->pluck('project_id')->unique()->values()->all();
 
         $perPage = 20;
         $offset = ($page - 1) * $perPage;
@@ -137,15 +132,15 @@ class MinecraftModrinthService
 
         $results = [];
         foreach ($pageIds as $projectId) {
-            $installedMod = null;
-            foreach ($installedMods as $mod) {
-                if ($mod['project_id'] === $projectId) {
-                    $installedMod = $mod;
+            $installedPlugin = null;
+            foreach ($installedPlugins as $plugin) {
+                if ($plugin['project_id'] === $projectId) {
+                    $installedPlugin = $plugin;
                     break;
                 }
             }
 
-            if (!$installedMod) {
+            if (!$installedPlugin) {
                 continue;
             }
 
@@ -155,20 +150,20 @@ class MinecraftModrinthService
                 if (isset($project['updated']) && !isset($project['date_modified'])) {
                     $project['date_modified'] = $project['updated'];
                 }
-                if (isset($installedMod['author']) && !isset($project['author'])) {
-                    $project['author'] = $installedMod['author'];
+                if (isset($installedPlugin['author']) && !isset($project['author'])) {
+                    $project['author'] = $installedPlugin['author'];
                 }
                 $results[] = $project;
             } else {
                 $results[] = [
-                    'project_id' => $installedMod['project_id'],
-                    'slug' => $installedMod['project_slug'],
-                    'title' => $installedMod['project_title'],
-                    'description' => trans('pelican-minecraft-plugins::strings.page.mod_unavailable'),
+                    'project_id' => $installedPlugin['project_id'],
+                    'slug' => $installedPlugin['project_slug'],
+                    'title' => $installedPlugin['project_title'],
+                    'description' => trans('pelican-minecraft-plugins::strings.page.plugin_unavailable'),
                     'icon_url' => null,
-                    'author' => $installedMod['author'] ?? '',
+                    'author' => $installedPlugin['author'] ?? '',
                     'downloads' => 0,
-                    'date_modified' => $installedMod['installed_at'],
+                    'date_modified' => $installedPlugin['installed_at'],
                     'project_type' => '',
                     'unavailable' => true,
                 ];
@@ -372,14 +367,14 @@ class MinecraftModrinthService
     }
 
     /**
-     * Scans the mods/plugins folder, hashes unknown JARs, looks them up on Modrinth,
+     * Scans the plugin folder, hashes unknown JARs, looks them up on Modrinth,
      * imports matches into metadata, and returns filenames not found on Modrinth.
      *
      * @return array<string>  Filenames with no Modrinth match
      *
      * @throws Exception
      */
-    public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function scanAndImportPlugins(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
@@ -400,64 +395,9 @@ class MinecraftModrinthService
     {
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
 
-        if ($resolvedType !== ModrinthProjectType::Datapack) {
-            return $resolvedType?->getFolder($server) ?? 'mods';
-        }
-
-        return $this->getDatapackWorldName($server, $fileRepository).'/datapacks';
+        return $resolvedType?->getFolder($server) ?? 'plugins';
     }
 
-    public function getDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
-    {
-        $worldName = trim((string) $this->getServerPropertiesValue($server, $fileRepository, 'level-name'), " \t\n\r\0\x0B/\\");
-
-        return $worldName !== '' ? $worldName : 'world';
-    }
-
-    protected function getServerPropertiesValue(Server $server, DaemonFileRepository $fileRepository, string $key): ?string
-    {
-        if (!array_key_exists($server->id, $this->serverPropertiesCache)) {
-            $this->serverPropertiesCache[$server->id] = $this->getServerProperties($server, $fileRepository);
-        }
-
-        $properties = $this->serverPropertiesCache[$server->id];
-
-        return $properties ? ($properties[$key] ?? null) : null;
-    }
-
-    /** @return array<string, string>|null */
-    protected function getServerProperties(Server $server, DaemonFileRepository $fileRepository): ?array
-    {
-        try {
-            $content = $fileRepository->setServer($server)->getContent('server.properties');
-        } catch (Exception $exception) {
-            return null;
-        }
-
-        if (empty($content)) {
-            return null;
-        }
-
-        $properties = [];
-        foreach (preg_split('/\r\n|\r|\n/', $content) ?: [] as $line) {
-            $line = trim($line);
-
-            if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-                continue;
-            }
-
-            [$propertyKey, $value] = array_map('trim', explode('=', $line, 2));
-            $properties[$propertyKey] = $value;
-        }
-
-        return $properties;
-    }
-
-    /**
-     * @return array<string>  Filenames with no Modrinth match
-     *
-     * @throws Exception
-     */
     protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
         $type ??= ModrinthProjectType::fromServer($server);
@@ -486,27 +426,27 @@ class MinecraftModrinthService
             ->values()
             ->toArray();
 
-        $installedModsMetadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
+        $installedPluginsMetadata = $this->getInstalledPluginsMetadata($server, $fileRepository, $type);
 
         $diskFilesLower = array_flip(array_map('strtolower', $diskFiles));
-        $filteredInstalledModsMetadata = array_values(array_filter(
-            $installedModsMetadata,
-            fn ($installedMod) => isset($diskFilesLower[strtolower($installedMod['filename'])])
+        $filteredInstalledPluginsMetadata = array_values(array_filter(
+            $installedPluginsMetadata,
+            fn ($installedPlugin) => isset($diskFilesLower[strtolower($installedPlugin['filename'])])
         ));
 
-        if (count($filteredInstalledModsMetadata) !== count($installedModsMetadata)) {
-            $this->saveInstalledModsMetadata($server, $fileRepository, $filteredInstalledModsMetadata, $type);
+        if (count($filteredInstalledPluginsMetadata) !== count($installedPluginsMetadata)) {
+            $this->saveInstalledPluginsMetadata($server, $fileRepository, $filteredInstalledPluginsMetadata, $type);
         }
 
-        $installedModsMetadata = $filteredInstalledModsMetadata;
+        $installedPluginsMetadata = $filteredInstalledPluginsMetadata;
 
         if (empty($diskFiles)) {
             return [];
         }
 
         $knownFilenames = [];
-        foreach ($installedModsMetadata as $installedMod) {
-            $knownFilenames[strtolower($installedMod['filename'])] = true;
+        foreach ($installedPluginsMetadata as $installedPlugin) {
+            $knownFilenames[strtolower($installedPlugin['filename'])] = true;
         }
 
         $unknownFiles = array_values(
@@ -588,7 +528,7 @@ class MinecraftModrinthService
             $projectId = $versionData['project_id'];
             $project = $projectsMap[$projectId] ?? null;
 
-            $saved = $this->saveModMetadata(
+            $saved = $this->savePluginMetadata(
                 server: $server,
                 fileRepository: $fileRepository,
                 projectId: $projectId,
@@ -619,25 +559,26 @@ class MinecraftModrinthService
         $type ??= ModrinthProjectType::fromServer($server);
 
         if (!$type) {
-            throw new Exception("Server {$server->id} does not support Modrinth mods or plugins");
+            throw new Exception("Server {$server->id} does not support Minecraft plugins");
         }
 
         return $this->getProjectFolder($server, $fileRepository, $type).'/.modrinth-metadata.json';
     }
 
     /** @return array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> */
-    public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function getInstalledPluginsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
         try {
             $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
             $content = $fileRepository->setServer($server)->getContent($metadataPath);
             $metadata = json_decode($content, true);
 
+            // Keep the historical key so existing plugin tracking data keeps working.
             if (!is_array($metadata) || !isset($metadata['installed_mods']) || !is_array($metadata['installed_mods'])) {
                 return [];
             }
 
-            $validInstalledMods = [];
+            $validInstalledPlugins = [];
             $requiredKeys = [
                 'project_id',
                 'project_slug',
@@ -657,17 +598,17 @@ class MinecraftModrinthService
 
                 $missingKeys = array_diff_key($requiredKeysFlipped, $entry);
                 if (empty($missingKeys)) {
-                    $validInstalledMods[] = $entry;
+                    $validInstalledPlugins[] = $entry;
                 }
             }
 
-            return $validInstalledMods;
+            return $validInstalledPlugins;
         } catch (Exception $exception) {
             return [];
         }
     }
 
-    public function saveModMetadata(
+    public function savePluginMetadata(
         Server $server,
         DaemonFileRepository $fileRepository,
         string $projectId,
@@ -682,15 +623,15 @@ class MinecraftModrinthService
         try {
             return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $projectId, $projectSlug, $projectTitle, $versionId, $versionNumber, $filename, $author, $type) {
                 $metadata = [
-                    'installed_mods' => $this->getInstalledModsMetadata($server, $fileRepository, $type),
+                    'installed_mods' => $this->getInstalledPluginsMetadata($server, $fileRepository, $type),
                 ];
 
                 $metadata['installed_mods'] = collect($metadata['installed_mods'])
-                    ->filter(fn ($mod) => $mod['project_id'] !== $projectId && strtolower($mod['filename']) !== strtolower($filename))
+                    ->filter(fn ($plugin) => $plugin['project_id'] !== $projectId && strtolower($plugin['filename']) !== strtolower($filename))
                     ->values()
                     ->toArray();
 
-                $modEntry = [
+                $pluginEntry = [
                     'project_id' => $projectId,
                     'project_slug' => $projectSlug,
                     'project_title' => $projectTitle,
@@ -701,10 +642,10 @@ class MinecraftModrinthService
                 ];
 
                 if ($author !== null) {
-                    $modEntry['author'] = $author;
+                    $pluginEntry['author'] = $author;
                 }
 
-                $metadata['installed_mods'][] = $modEntry;
+                $metadata['installed_mods'][] = $pluginEntry;
 
                 $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
                 $response = $fileRepository->setServer($server)->putContent(
@@ -722,16 +663,16 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
+     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedPlugins
      */
-    protected function saveInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedMods, ?ModrinthProjectType $type = null): bool
+    protected function saveInstalledPluginsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedPlugins, ?ModrinthProjectType $type = null): bool
     {
         try {
-            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $installedMods, $type) {
+            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $installedPlugins, $type) {
                 $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
                 $response = $fileRepository->setServer($server)->putContent(
                     $metadataPath,
-                    json_encode(['installed_mods' => array_values($installedMods)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+                    json_encode(['installed_mods' => array_values($installedPlugins)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
                 );
 
                 return !$response->failed();
@@ -743,16 +684,16 @@ class MinecraftModrinthService
         }
     }
 
-    public function removeModMetadata(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null): bool
+    public function removePluginMetadata(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null): bool
     {
         try {
             return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $projectId, $type) {
                 $metadata = [
-                    'installed_mods' => $this->getInstalledModsMetadata($server, $fileRepository, $type),
+                    'installed_mods' => $this->getInstalledPluginsMetadata($server, $fileRepository, $type),
                 ];
 
                 $metadata['installed_mods'] = collect($metadata['installed_mods'])
-                    ->filter(fn ($mod) => $mod['project_id'] !== $projectId)
+                    ->filter(fn ($plugin) => $plugin['project_id'] !== $projectId)
                     ->values()
                     ->toArray();
 
@@ -774,11 +715,11 @@ class MinecraftModrinthService
     /** @return array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
     public function getInstalledMod(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null): ?array
     {
-        $installedMods = $this->getInstalledModsMetadata($server, $fileRepository, $type);
+        $installedPlugins = $this->getInstalledPluginsMetadata($server, $fileRepository, $type);
 
-        foreach ($installedMods as $mod) {
-            if ($mod['project_id'] === $projectId) {
-                return $mod;
+        foreach ($installedPlugins as $plugin) {
+            if ($plugin['project_id'] === $projectId) {
+                return $plugin;
             }
         }
 
@@ -786,10 +727,10 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param array{version_id: string, version_number: string} $installedMod
+     * @param array{version_id: string, version_number: string} $installedPlugin
      * @param array<int, array{id: string, version_number: string}> $availableVersions
      */
-    public function isUpdateAvailable(array $installedMod, array $availableVersions): bool
+    public function isUpdateAvailable(array $installedPlugin, array $availableVersions): bool
     {
         if (empty($availableVersions)) {
             return false;
@@ -797,15 +738,15 @@ class MinecraftModrinthService
 
         $latestVersion = $availableVersions[0];
 
-        return $installedMod['version_id'] !== $latestVersion['id'];
+        return $installedPlugin['version_id'] !== $latestVersion['id'];
     }
 
     /**
      * @return array<string>
      */
-    public function getInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function getInstalledPlugins(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
-        $metadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
+        $metadata = $this->getInstalledPluginsMetadata($server, $fileRepository, $type);
 
         return collect($metadata)
             ->pluck('filename')

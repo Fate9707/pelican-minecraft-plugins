@@ -2,9 +2,7 @@
 
 return [
     'plugin_name' => 'Modrinth',
-    'minecraft_mods' => 'Minecraft-modok',
     'minecraft_plugins' => 'Minecraft pluginok',
-    'minecraft_datapacks' => 'Minecraft adatcsomagok',
 
     'settings' => [
         'latest_minecraft_version' => 'Legújabb Minecraft-verzió',
@@ -26,7 +24,7 @@ return [
         'available_updates' => 'Elérhető frissítések',
         'supported_sources' => 'Támogatott források',
         'open_plugin_folder' => 'Pluginmappa megnyitása',
-        'modrinth_description' => 'Pluginok és modok',
+        'modrinth_description' => 'Minecraft pluginok',
         'hangar_description' => 'Paper / Velocity pluginok',
         'spigot_description' => 'Klasszikus pluginok',
         'open_folder' => ':folder mappa megnyitása',
@@ -37,7 +35,7 @@ return [
         'view_all' => 'Összes',
         'view_installed' => 'Telepítve',
         'updates' => 'Frissítések',
-        'mod_unavailable' => 'Ez a mod vagy plugin már nem érhető el a Modrinthen.',
+        'plugin_unavailable' => 'Ez a plugin már nem érhető el a Modrinthen.',
     ],
 
     'table' => [
@@ -58,13 +56,9 @@ return [
     ],
 
     'actions' => [
-        'scan' => 'Modok keresése',
-        'rescan_mods_for_updates' => 'Modok frissítéseinek újbóli keresése',
+        'scan' => 'Pluginok keresése',
         'rescan_plugins_for_updates' => 'Pluginok frissítéseinek újbóli keresése',
-        'rescan_datapacks_for_updates' => 'Adatcsomagok frissítéseinek újbóli keresése',
-        'update_all_mods' => 'Összes mod frissítése',
         'update_all_plugins' => 'Összes plugin frissítése',
-        'update_all_datapacks' => 'Összes adatcsomag frissítése',
         'install_latest' => 'Legújabb verzió telepítése',
         'install' => 'Telepítés',
         'installed' => 'Telepítve',
@@ -83,9 +77,9 @@ return [
 
     'modals' => [
         'bulk_update_confirmation' => 'Frissítsem az összes telepített elemet? A régi fájlokat új verziók váltják fel.',
-        'update_heading' => 'Mod/plugin frissítése',
+        'update_heading' => 'Plugin frissítése',
         'update_description' => 'A(z) :old_version verziót lecseréli erre: :new_version. A régi fájl törlődik.',
-        'uninstall_heading' => 'Mod/plugin eltávolítása',
+        'uninstall_heading' => 'Plugin eltávolítása',
         'uninstall_description' => 'Biztosan eltávolítod ezt: :name? A fájl végleg törlődik a szerveredről.',
     ],
 
@@ -102,13 +96,11 @@ return [
         'uninstall_success_body' => 'Sikeresen eltávolítva: :name',
         'uninstall_failed' => 'Az eltávolítás nem sikerült',
         'uninstall_failed_body' => 'Hiba történt eltávolítás közben. Próbáld újra, vagy fordulj az ügyfélszolgálathoz, ha a hiba továbbra is fennáll.',
-        'scan_in_progress_mods' => 'Modok keresése folyamatban… várj egy kicsit.',
         'scan_in_progress_plugins' => 'Pluginok keresése folyamatban… várj egy kicsit.',
-        'scan_in_progress_datapacks' => 'Adatcsomagok keresése folyamatban… várj egy kicsit.',
-        'scan_success' => 'A keresés :count modot importált.',
+        'scan_success' => 'A keresés :count plugint importált.',
         'scan_failed' => 'A keresés nem sikerült: a Modrinth nem érhető el.',
-        'bulk_update_success' => ':count elem frissítve.',
-        'bulk_update_partial' => ':updated frissítve, :failed sikertelen.',
-        'bulk_update_none' => 'Minden elem naprakész.',
+        'bulk_update_success' => ':count plugin frissítve.',
+        'bulk_update_partial' => ':updated plugin frissítve, :failed sikertelen.',
+        'bulk_update_none' => 'Minden plugin naprakész.',
     ],
 ];

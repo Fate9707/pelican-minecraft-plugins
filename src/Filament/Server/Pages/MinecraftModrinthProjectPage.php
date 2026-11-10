@@ -42,7 +42,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     use InteractsWithTable;
 
     /** @var array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
-    protected ?array $installedModsMetadata = null;
+    protected ?array $installedPluginsMetadata = null;
 
     /** @var array<string, array<int, mixed>> Cache for version data by project_id */
     protected array $versionsCache = [];
@@ -57,8 +57,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     protected $queryString = [
         'source' => ['except' => 'modrinth'],
     ];
-
-    protected ?string $datapackWorldName = null;
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
 
@@ -133,7 +131,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         $this->source = $source;
         $this->updatesOnly = false;
-        $this->installedModsMetadata = null;
+        $this->installedPluginsMetadata = null;
         $this->versionsCache = [];
         $this->resetPage();
     }
@@ -180,14 +178,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return;
         }
 
-        $scanInProgressKey = match ($projectType) {
-            ModrinthProjectType::Plugin => 'pelican-minecraft-plugins::strings.notifications.scan_in_progress_plugins',
-            ModrinthProjectType::Datapack => 'pelican-minecraft-plugins::strings.notifications.scan_in_progress_datapacks',
-            default => 'pelican-minecraft-plugins::strings.notifications.scan_in_progress_mods',
-        };
-
         Notification::make()
-            ->title(trans($scanInProgressKey))
+            ->title(trans('pelican-minecraft-plugins::strings.notifications.scan_in_progress_plugins'))
             ->info()
             ->send();
     }
@@ -216,7 +208,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->values()
             ->toArray();
 
-        $knownFilenames = array_map('strtolower', MinecraftModrinth::getInstalledMods($server, $fileRepository, $type));
+        $knownFilenames = array_map('strtolower', MinecraftModrinth::getInstalledPlugins($server, $fileRepository, $type));
 
         foreach ($diskFiles as $filename) {
             if (!in_array($filename, $knownFilenames, true)) {
@@ -243,36 +235,36 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     }
 
     /** @return array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string}> */
-    protected function getInstalledModsMetadata(): array
+    protected function getInstalledPluginsMetadata(): array
     {
-        if ($this->installedModsMetadata === null) {
+        if ($this->installedPluginsMetadata === null) {
             /** @var Server $server */
             $server = Filament::getTenant();
             /** @var DaemonFileRepository $fileRepository */
             $fileRepository = app(DaemonFileRepository::class);
 
-            $metadata = MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, static::detectProjectType($server));
-            $this->installedModsMetadata = array_values(array_filter(
+            $metadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, static::detectProjectType($server));
+            $this->installedPluginsMetadata = array_values(array_filter(
                 $metadata,
-                fn (array $mod) => $this->usesHangar()
-                    ? str_starts_with($mod['project_id'] ?? '', 'hangar:')
+                fn (array $plugin) => $this->usesHangar()
+                    ? str_starts_with($plugin['project_id'] ?? '', 'hangar:')
                     : ($this->usesSpiget()
-                        ? str_starts_with($mod['project_id'] ?? '', 'spigot:')
-                        : !str_starts_with($mod['project_id'] ?? '', 'hangar:') && !str_starts_with($mod['project_id'] ?? '', 'spigot:'))
+                        ? str_starts_with($plugin['project_id'] ?? '', 'spigot:')
+                        : !str_starts_with($plugin['project_id'] ?? '', 'hangar:') && !str_starts_with($plugin['project_id'] ?? '', 'spigot:'))
             ));
         }
 
-        return $this->installedModsMetadata;
+        return $this->installedPluginsMetadata;
     }
 
     /** @return array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
     protected function getInstalledMod(string $projectId): ?array
     {
-        $installedMods = $this->getInstalledModsMetadata();
+        $installedPlugins = $this->getInstalledPluginsMetadata();
 
-        foreach ($installedMods as $mod) {
-            if ($mod['project_id'] === $projectId) {
-                return $mod;
+        foreach ($installedPlugins as $plugin) {
+            if ($plugin['project_id'] === $projectId) {
+                return $plugin;
             }
         }
 
@@ -375,7 +367,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ? $versionMatch[1]
             : 'Detected';
 
-        $saved = MinecraftModrinth::saveModMetadata(
+        $saved = MinecraftModrinth::savePluginMetadata(
             $server,
             $fileRepository,
             (string) $candidate['project_id'],
@@ -389,15 +381,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         );
 
         return $saved ? $candidate : null;
-    }
-
-    protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
-    {
-        if ($this->datapackWorldName === null) {
-            $this->datapackWorldName = MinecraftModrinth::getDatapackWorldName($server, $fileRepository);
-        }
-
-        return $this->datapackWorldName;
     }
 
     /**
@@ -431,7 +414,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
      * @param array<string, mixed> $record
      * @param array<string, mixed> $versionData
      * @param array<string, mixed> $primaryFile
-     * @param array<string, mixed>|null $installedMod
+     * @param array<string, mixed>|null $installedPlugin
      *
      * @throws Exception
      */
@@ -441,21 +424,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         array $record,
         array $versionData,
         array $primaryFile,
-        ?array $installedMod = null
+        ?array $installedPlugin = null
     ): void {
         $safeNewFilename = $this->validateFilename($primaryFile['filename']);
-        $oldFilename = $installedMod ? $this->validateFilename($installedMod['filename']) : null;
+        $oldFilename = $installedPlugin ? $this->validateFilename($installedPlugin['filename']) : null;
 
         $type = static::detectProjectType($server);
         if (!$type) {
-            throw new Exception('Server does not support Modrinth mods or plugins');
+            throw new Exception('Server does not support Minecraft plugins');
         }
 
         $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
         $fileRepository->setServer($server)->pull($primaryFile['url'], $folder);
 
-        $saved = MinecraftModrinth::saveModMetadata(
+        $saved = MinecraftModrinth::savePluginMetadata(
             $server,
             $fileRepository,
             $record['project_id'],
@@ -503,16 +486,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     report($rollbackException);
                 }
 
-                if ($installedMod && !MinecraftModrinth::saveModMetadata(
+                if ($installedPlugin && !MinecraftModrinth::savePluginMetadata(
                     $server,
                     $fileRepository,
                     $record['project_id'],
-                    $installedMod['project_slug'],
-                    $installedMod['project_title'],
-                    $installedMod['version_id'],
-                    $installedMod['version_number'],
+                    $installedPlugin['project_slug'],
+                    $installedPlugin['project_title'],
+                    $installedPlugin['version_id'],
+                    $installedPlugin['version_number'],
                     $oldFilename,
-                    $installedMod['author'] ?? null,
+                    $installedPlugin['author'] ?? null,
                     $type
                 )) {
                     report(new Exception('Failed to restore old mod metadata during rollback'));
@@ -535,21 +518,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $updatedCount = 0;
         $failedCount = 0;
-        $installedMods = $this->getInstalledModsMetadata();
+        $installedPlugins = $this->getInstalledPluginsMetadata();
 
-        foreach ($installedMods as $installedMod) {
+        foreach ($installedPlugins as $installedPlugin) {
             try {
-                if (!isset($installedMod['project_id'], $installedMod['project_slug'], $installedMod['project_title'], $installedMod['version_id'])) {
+                if (!isset($installedPlugin['project_id'], $installedPlugin['project_slug'], $installedPlugin['project_title'], $installedPlugin['version_id'])) {
                     continue;
                 }
 
-                $versions = $this->getProviderVersions($installedMod['project_id'], $server);
+                $versions = $this->getProviderVersions($installedPlugin['project_id'], $server);
                 if (empty($versions) || !isset($versions[0]['id'], $versions[0]['version_number'], $versions[0]['files'])) {
                     continue;
                 }
 
                 $latestVersion = $versions[0];
-                if ($installedMod['version_id'] === $latestVersion['id']) {
+                if ($installedPlugin['version_id'] === $latestVersion['id']) {
                     continue;
                 }
 
@@ -559,13 +542,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 }
 
                 $record = [
-                    'project_id' => $installedMod['project_id'],
-                    'slug' => $installedMod['project_slug'],
-                    'title' => $installedMod['project_title'],
-                    'author' => $installedMod['author'] ?? null,
+                    'project_id' => $installedPlugin['project_id'],
+                    'slug' => $installedPlugin['project_slug'],
+                    'title' => $installedPlugin['project_title'],
+                    'author' => $installedPlugin['author'] ?? null,
                 ];
 
-                $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
+                $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedPlugin);
                 $updatedCount++;
             } catch (Exception $exception) {
                 report($exception);
@@ -574,7 +557,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         }
 
         if ($updatedCount > 0 || $failedCount > 0) {
-            $this->installedModsMetadata = null;
+            $this->installedPluginsMetadata = null;
             $this->versionsCache = [];
         }
 
@@ -656,13 +639,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             throw new Exception('Missing project ID for uninstall');
         }
 
-        $installedMod = $this->getInstalledMod($record['project_id']);
+        $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-        if (!$installedMod) {
+        if (!$installedPlugin) {
             throw new Exception('Mod not found in metadata');
         }
 
-        return $this->validateFilename($installedMod['filename']);
+        return $this->validateFilename($installedPlugin['filename']);
     }
 
     /**
@@ -677,23 +660,23 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                 if ($this->activeTab === 'installed') {
                     $perPage = 20;
-                    $installedMods = $this->getInstalledModsMetadata();
+                    $installedPlugins = $this->getInstalledPluginsMetadata();
                     $unknownFiles = [];
 
                     /** @var DaemonFileRepository $fileRepository */
                     $fileRepository = app(DaemonFileRepository::class);
 
                     if (!$this->usesExternalProvider()) {
-                        $metadataBefore = count($installedMods);
+                        $metadataBefore = count($installedPlugins);
 
                         try {
-                            $this->unknownFiles = MinecraftModrinth::scanAndImportMods($server, $fileRepository, static::detectProjectType($server));
+                            $this->unknownFiles = MinecraftModrinth::scanAndImportPlugins($server, $fileRepository, static::detectProjectType($server));
                             $unknownFiles = $this->unknownFiles;
 
-                            $this->installedModsMetadata = null;
-                            $installedMods = $this->getInstalledModsMetadata();
+                            $this->installedPluginsMetadata = null;
+                            $installedPlugins = $this->getInstalledPluginsMetadata();
 
-                            $importedCount = max(0, count($installedMods) - $metadataBefore);
+                            $importedCount = max(0, count($installedPlugins) - $metadataBefore);
                             if ($importedCount > 0) {
                                 Notification::make()
                                     ->title(trans('pelican-minecraft-plugins::strings.notifications.scan_success', ['count' => $importedCount]))
@@ -719,9 +702,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             if ($type) {
                                 $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
                                 $contents = $fileRepository->setServer($server)->getDirectory($folder);
-                                $allMetadata = MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, $type);
+                                $allMetadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, $type);
                                 $knownFilenames = array_fill_keys(array_map(
-                                    fn (array $mod) => strtolower($mod['filename']),
+                                    fn (array $plugin) => strtolower($plugin['filename']),
                                     $allMetadata
                                 ), true);
                                 $unknownFiles = collect($contents)
@@ -739,11 +722,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 }
 
                                 if ($identifiedAny) {
-                                    $this->installedModsMetadata = null;
-                                    $installedMods = $this->getInstalledModsMetadata();
-                                    $allMetadata = MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, $type);
+                                    $this->installedPluginsMetadata = null;
+                                    $installedPlugins = $this->getInstalledPluginsMetadata();
+                                    $allMetadata = MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, $type);
                                     $knownFilenames = array_fill_keys(array_map(
-                                        fn (array $mod) => strtolower($mod['filename']),
+                                        fn (array $plugin) => strtolower($plugin['filename']),
                                         $allMetadata
                                     ), true);
                                     $unknownFiles = array_values(array_filter(
@@ -763,9 +746,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                     if ($search) {
                         $searchLower = strtolower($search);
-                        $installedMods = array_values(array_filter($installedMods, function (array $mod) use ($searchLower) {
-                            return str_contains(strtolower($mod['project_title']), $searchLower)
-                                || str_contains(strtolower($mod['project_slug']), $searchLower);
+                        $installedPlugins = array_values(array_filter($installedPlugins, function (array $plugin) use ($searchLower) {
+                            return str_contains(strtolower($plugin['project_title']), $searchLower)
+                                || str_contains(strtolower($plugin['project_slug']), $searchLower);
                         }));
 
                         $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains(strtolower($filename), $searchLower)));
@@ -773,29 +756,29 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                     $projects = [];
                     if ($this->usesExternalProvider()) {
-                        foreach ($installedMods as $mod) {
+                        foreach ($installedPlugins as $plugin) {
                             $isSpigot = $this->usesSpiget();
                             $projects[] = [
-                                'project_id' => $mod['project_id'],
-                                'slug' => $mod['project_slug'],
-                                'hangar_path' => trim(($mod['author'] ?? '').'/'.$mod['project_slug'], '/'),
-                                'spigot_resource_id' => $isSpigot ? (substr((string) $mod['project_id'], 7)) : null,
-                                'title' => $mod['project_title'],
+                                'project_id' => $plugin['project_id'],
+                                'slug' => $plugin['project_slug'],
+                                'hangar_path' => trim(($plugin['author'] ?? '').'/'.$plugin['project_slug'], '/'),
+                                'spigot_resource_id' => $isSpigot ? (substr((string) $plugin['project_id'], 7)) : null,
+                                'title' => $plugin['project_title'],
                                 'description' => trans($isSpigot
                                     ? 'pelican-minecraft-plugins::strings.badges.source_spigot'
                                     : 'pelican-minecraft-plugins::strings.badges.source_hangar'),
                                 'icon_url' => null,
-                                'author' => $mod['author'] ?? '',
+                                'author' => $plugin['author'] ?? '',
                                 'downloads' => null,
-                                'date_modified' => $mod['installed_at'] ?? null,
+                                'date_modified' => $plugin['installed_at'] ?? null,
                                 'project_type' => 'plugin',
                                 'provider' => $isSpigot ? 'spigot' : 'hangar',
                             ];
                         }
-                    } elseif (!empty($installedMods)) {
-                        $installedPages = (int) ceil(count($installedMods) / $perPage);
+                    } elseif (!empty($installedPlugins)) {
+                        $installedPages = (int) ceil(count($installedPlugins) / $perPage);
                         for ($installedPage = 1; $installedPage <= $installedPages; $installedPage++) {
-                            $projects = array_merge($projects, MinecraftModrinth::getInstalledModsFromModrinth($installedMods, $installedPage));
+                            $projects = array_merge($projects, MinecraftModrinth::getInstalledPluginsFromModrinth($installedPlugins, $installedPage));
                         }
                     }
 
@@ -820,16 +803,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 return false;
                             }
 
-                            $installedMod = $this->getInstalledMod($project['project_id']);
+                            $installedPlugin = $this->getInstalledMod($project['project_id']);
                             $versions = $this->getCachedVersions($project['project_id']);
 
-                            return $installedMod !== null
+                            return $installedPlugin !== null
                                 && isset($versions[0]['id'])
-                                && $installedMod['version_id'] !== $versions[0]['id'];
+                                && $installedPlugin['version_id'] !== $versions[0]['id'];
                         }));
                     }
 
-                    $totalCount = $this->updatesOnly ? count($projects) : count($installedMods) + count($unknownFiles);
+                    $totalCount = $this->updatesOnly ? count($projects) : count($installedPlugins) + count($unknownFiles);
                     $offset = ($page - 1) * $perPage;
                     $pagedProjects = array_slice($projects, $offset, $perPage);
 
@@ -918,8 +901,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->schema(function (array $record) {
                         $versions = $this->getCachedVersions($record['project_id']);
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
-                        $installedVersionId = $installedMod['version_id'] ?? null;
+                        $installedPlugin = $this->getInstalledMod($record['project_id']);
+                        $installedVersionId = $installedPlugin['version_id'] ?? null;
 
                         $sections = [];
                         foreach ($versions as $versionIndex => $versionData) {
@@ -979,11 +962,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                                 throw new Exception('No downloadable file found');
                                             }
 
-                                            $installedMod = $this->getInstalledMod($record['project_id']);
+                                            $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-                                            $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedMod);
+                                            $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedPlugin);
 
-                                            $this->installedModsMetadata = null;
+                                            $this->installedPluginsMetadata = null;
                                             $this->versionsCache = [];
                                             $this->js('$wire.$refresh()');
 
@@ -998,7 +981,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                         } catch (Exception $exception) {
                                             report($exception);
 
-                                            $this->installedModsMetadata = null;
+                                            $this->installedPluginsMetadata = null;
                                             $this->versionsCache = [];
                                             $this->js('$wire.$refresh()');
 
@@ -1041,9 +1024,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-                        if (!is_null($installedMod)) {
+                        if (!is_null($installedPlugin)) {
                             return false;
                         }
 
@@ -1074,7 +1057,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
 
-                            $this->installedModsMetadata = null;
+                            $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1088,7 +1071,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1110,9 +1093,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-                        if (is_null($installedMod)) {
+                        if (is_null($installedPlugin)) {
                             return false;
                         }
 
@@ -1122,16 +1105,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        return $installedMod['version_id'] !== $versions[0]['id'];
+                        return $installedPlugin['version_id'] !== $versions[0]['id'];
                     })
                     ->requiresConfirmation()
                     ->modalHeading(trans('pelican-minecraft-plugins::strings.modals.update_heading'))
                     ->modalDescription(function (array $record) {
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $installedPlugin = $this->getInstalledMod($record['project_id']);
                         $versions = $this->getCachedVersions($record['project_id']);
 
                         return trans('pelican-minecraft-plugins::strings.modals.update_description', [
-                            'old_version' => $installedMod['version_number'] ?? 'unknown',
+                            'old_version' => $installedPlugin['version_number'] ?? 'unknown',
                             'new_version' => $versions[0]['version_number'] ?? 'unknown',
                         ]);
                     })
@@ -1140,9 +1123,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             /** @var Server $server */
                             $server = Filament::getTenant();
 
-                            $installedMod = $this->getInstalledMod($record['project_id']);
+                            $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-                            if (!$installedMod) {
+                            if (!$installedPlugin) {
                                 throw new Exception('Mod not found in metadata');
                             }
 
@@ -1164,9 +1147,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 throw new Exception('No downloadable file found');
                             }
 
-                            $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
+                            $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedPlugin);
 
-                            $this->installedModsMetadata = null;
+                            $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1179,7 +1162,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1202,9 +1185,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $installedPlugin = $this->getInstalledMod($record['project_id']);
 
-                        if (is_null($installedMod)) {
+                        if (is_null($installedPlugin)) {
                             return false;
                         }
 
@@ -1214,7 +1197,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return true;
                         }
 
-                        return $installedMod['version_id'] === $versions[0]['id'];
+                        return $installedPlugin['version_id'] === $versions[0]['id'];
                     }),
                 Action::make('uninstall')
                     ->iconButton()
@@ -1245,7 +1228,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $type = static::detectProjectType($server);
                             if (!$type) {
-                                throw new Exception('Server does not support Modrinth mods or plugins');
+                                throw new Exception('Server does not support Minecraft plugins');
                             }
 
                             $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
@@ -1264,7 +1247,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $metadataRemoved = true;
                             if (!empty($record['project_id'])) {
-                                $metadataRemoved = MinecraftModrinth::removeModMetadata($server, $fileRepository, $record['project_id'], $type);
+                                $metadataRemoved = MinecraftModrinth::removePluginMetadata($server, $fileRepository, $record['project_id'], $type);
                             }
 
                             if (!$metadataRemoved) {
@@ -1273,15 +1256,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                     'server_id' => $server->id,
                                 ]);
 
-                                if (is_array($this->installedModsMetadata)) {
-                                    $this->installedModsMetadata = array_values(
-                                        array_filter($this->installedModsMetadata, fn ($mod) => $mod['project_id'] !== $record['project_id'])
+                                if (is_array($this->installedPluginsMetadata)) {
+                                    $this->installedPluginsMetadata = array_values(
+                                        array_filter($this->installedPluginsMetadata, fn ($plugin) => $plugin['project_id'] !== $record['project_id'])
                                     );
                                 }
 
                                 unset($this->versionsCache[$record['project_id']]);
                             } else {
-                                $this->installedModsMetadata = null;
+                                $this->installedPluginsMetadata = null;
                                 $this->versionsCache = [];
                             }
 
@@ -1299,7 +1282,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
 
                             if ($this->activeTab === 'installed') {
@@ -1361,11 +1344,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 ->icon('tabler-folder-open')
                 ->url(fn () => ListFiles::getUrl(['path' => $folder]), true),
             Action::make('update_all')
-                ->label(fn () => trans(match ($type) {
-                    ModrinthProjectType::Plugin => 'pelican-minecraft-plugins::strings.actions.update_all_plugins',
-                    ModrinthProjectType::Datapack => 'pelican-minecraft-plugins::strings.actions.update_all_datapacks',
-                    default => 'pelican-minecraft-plugins::strings.actions.update_all_mods',
-                }))
+                ->label(trans('pelican-minecraft-plugins::strings.actions.update_all_plugins'))
                 ->icon('tabler-download')
                 ->color('warning')
                 ->requiresConfirmation()
@@ -1401,13 +1380,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         ->send();
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null),
-            Action::make('scan_mods')
+            Action::make('scan_plugins')
                 ->label(trans('pelican-minecraft-plugins::strings.actions.scan'))
-                ->tooltip(fn () => trans(match ($type) {
-                    ModrinthProjectType::Plugin => 'pelican-minecraft-plugins::strings.actions.rescan_plugins_for_updates',
-                    ModrinthProjectType::Datapack => 'pelican-minecraft-plugins::strings.actions.rescan_datapacks_for_updates',
-                    default => 'pelican-minecraft-plugins::strings.actions.rescan_mods_for_updates',
-                }))
+                ->tooltip(trans('pelican-minecraft-plugins::strings.actions.rescan_plugins_for_updates'))
                 ->icon('tabler-search')
                 ->action(function () use ($server, $type) {
                     if ($this->usesExternalProvider()) {

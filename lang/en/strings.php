@@ -2,9 +2,7 @@
 
 return [
     'plugin_name' => 'Modrinth',
-    'minecraft_mods' => 'Minecraft Mods',
     'minecraft_plugins' => 'Minecraft Plugins',
-    'minecraft_datapacks' => 'Minecraft Datapacks',
 
     'settings' => [
         'latest_minecraft_version' => 'Latest Minecraft Version',
@@ -26,7 +24,7 @@ return [
         'available_updates' => 'Available updates',
         'supported_sources' => 'Supported sources',
         'open_plugin_folder' => 'Open plugin folder',
-        'modrinth_description' => 'Plugins and mods',
+        'modrinth_description' => 'Plugins',
         'hangar_description' => 'Paper / Velocity plugins',
         'spigot_description' => 'Classic plugins',
         'open_folder' => 'Open :folder folder',
@@ -37,7 +35,7 @@ return [
         'view_all' => 'All',
         'view_installed' => 'Installed',
         'updates' => 'Updates',
-        'mod_unavailable' => 'This mod/plugin is no longer available on Modrinth',
+        'plugin_unavailable' => 'This plugin is no longer available on Modrinth',
     ],
 
     'table' => [
@@ -58,13 +56,9 @@ return [
     ],
 
     'actions' => [
-        'scan' => 'Scan Mods',
-        'rescan_mods_for_updates' => 'Rescan mods for updates',
+        'scan' => 'Scan plugins',
         'rescan_plugins_for_updates' => 'Rescan plugins for updates',
-        'rescan_datapacks_for_updates' => 'Rescan datapacks for updates',
-        'update_all_mods' => 'Update all mods',
         'update_all_plugins' => 'Update all plugins',
-        'update_all_datapacks' => 'Update all datapacks',
         'install_latest' => 'Install latest version',
         'install' => 'Install',
         'installed' => 'Installed',
@@ -83,9 +77,9 @@ return [
 
     'modals' => [
         'bulk_update_confirmation' => 'Update all installed items? Their existing files will be replaced with newer versions.',
-        'update_heading' => 'Update Mod/Plugin',
+        'update_heading' => 'Update plugin',
         'update_description' => 'This will replace version :old_version with version :new_version. The old file will be deleted.',
-        'uninstall_heading' => 'Uninstall Mod/Plugin',
+        'uninstall_heading' => 'Uninstall plugin',
         'uninstall_description' => 'Are you sure you want to uninstall :name? This will permanently delete the file from your server.',
     ],
 
@@ -102,13 +96,11 @@ return [
         'uninstall_success_body' => 'Successfully uninstalled :name',
         'uninstall_failed' => 'Uninstall failed',
         'uninstall_failed_body' => 'An error occurred during uninstallation. Please try again or contact support if the issue persists.',
-        'scan_in_progress_mods' => 'Scanning mods... please wait a moment.',
         'scan_in_progress_plugins' => 'Scanning plugins... please wait a moment.',
-        'scan_in_progress_datapacks' => 'Scanning datapacks... please wait a moment.',
-        'scan_success' => ':count mod(s) imported from scan.',
+        'scan_success' => ':count plugin(s) imported from scan.',
         'scan_failed' => 'Scan failed — Modrinth could not be reached.',
-        'bulk_update_success' => ':count item(s) updated.',
-        'bulk_update_partial' => ':updated updated, :failed failed.',
-        'bulk_update_none' => 'All items are already up to date.',
+        'bulk_update_success' => ':count plugin(s) updated.',
+        'bulk_update_partial' => ':updated plugin(s) updated, :failed failed.',
+        'bulk_update_none' => 'All plugins are already up to date.',
     ],
 ];

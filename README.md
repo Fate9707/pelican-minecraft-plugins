@@ -14,7 +14,7 @@ Install this package in Pelican's Plugin Manager, then open the plugin managemen
 
 The manager presents plugins available for that server and provides actions to install, update, and remove supported entries. Version compatibility depends on the information supplied by each source.
 
-This project manages **server plugins**. It is not a client mod or datapack manager.
+This manager lists and handles server plugins only.
 
 ## License
 
