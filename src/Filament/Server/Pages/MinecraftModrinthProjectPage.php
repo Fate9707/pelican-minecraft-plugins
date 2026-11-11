@@ -525,79 +525,133 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** @return array{name?: string, website?: string} */
     private function readPluginIdentityFromJar(Server $server, DaemonFileRepository $fileRepository, string $filename): array
     {
-        if (!class_exists(\ZipArchive::class)) {
-            return [];
-        }
-
         $type = static::detectProjectType($server);
         if (!$type) {
             return [];
         }
 
-        $temporaryFile = null;
-
         try {
             $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
             $contents = $fileRepository->setServer($server)->getContent("{$folder}/{$filename}");
-            $temporaryFile = tempnam(sys_get_temp_dir(), 'pelican-plugin-');
-            if (!is_string($temporaryFile) || file_put_contents($temporaryFile, $contents) === false) {
+            if (!is_string($contents) || $contents === '') {
                 return [];
             }
 
-            $archive = new \ZipArchive();
-            if ($archive->open($temporaryFile) !== true) {
-                return [];
-            }
+            $identity = [];
+            foreach (['paper-plugin.yml', 'plugin.yml'] as $descriptorName) {
+                $descriptor = $this->readZipEntry($contents, $descriptorName);
+                if (!is_string($descriptor)) {
+                    continue;
+                }
 
-            try {
-                $identity = [];
-                foreach (['paper-plugin.yml', 'plugin.yml'] as $descriptorName) {
-                    $descriptor = $archive->getFromName($descriptorName);
-                    if (!is_string($descriptor)) {
+                foreach (['name', 'website'] as $key) {
+                    if (isset($identity[$key])) {
                         continue;
                     }
 
-                    foreach (['name', 'website'] as $key) {
-                        if (isset($identity[$key])) {
-                            continue;
-                        }
-
-                        $value = $this->readYamlScalar($descriptor, $key);
-                        if ($value !== null) {
-                            $identity[$key] = $value;
-                        }
+                    $value = $this->readYamlScalar($descriptor, $key);
+                    if ($value !== null) {
+                        $identity[$key] = $value;
                     }
                 }
-
-                if (!isset($identity['name'])) {
-                    $manifest = $archive->getFromName('META-INF/MANIFEST.MF');
-                    if (is_string($manifest)
-                        && preg_match('/^(?:Implementation|Specification)-Title:\s*(.+)$/mi', $manifest, $matches) === 1) {
-                        $identity['name'] = trim($matches[1]);
-                    }
-                }
-
-                if (!isset($identity['website'])) {
-                    $manifest = $archive->getFromName('META-INF/MANIFEST.MF');
-                    if (is_string($manifest)
-                        && preg_match('/^(?:Implementation|Specification)-URL:\s*(https?:\/\/\S+)$/mi', $manifest, $matches) === 1) {
-                        $identity['website'] = trim($matches[1]);
-                    }
-                }
-
-                return $identity;
-            } finally {
-                $archive->close();
             }
+
+            $manifest = $this->readZipEntry($contents, 'META-INF/MANIFEST.MF');
+            if (!isset($identity['name']) && is_string($manifest)
+                && preg_match('/^(?:Implementation|Specification)-Title:\s*(.+)$/mi', $manifest, $matches) === 1) {
+                $identity['name'] = trim($matches[1]);
+            }
+
+            if (!isset($identity['website']) && is_string($manifest)
+                && preg_match('/^(?:Implementation|Specification)-URL:\s*(https?:\/\/\S+)$/mi', $manifest, $matches) === 1) {
+                $identity['website'] = trim($matches[1]);
+            }
+
+            return $identity;
         } catch (\Throwable $exception) {
             report($exception);
 
             return [];
-        } finally {
-            if (is_string($temporaryFile) && is_file($temporaryFile)) {
-                @unlink($temporaryFile);
-            }
         }
+    }
+
+    private function readZipEntry(string $contents, string $entryName): ?string
+    {
+        $archiveLength = strlen($contents);
+        $searchOffset = max(0, $archiveLength - 65557);
+        $endRecordPosition = strrpos(substr($contents, $searchOffset), "PK\x05\x06");
+        if ($endRecordPosition === false) {
+            return null;
+        }
+
+        $endRecordPosition += $searchOffset;
+        if ($archiveLength - $endRecordPosition < 22) {
+            return null;
+        }
+
+        $endRecord = unpack('vdisk/vstart/ventriesDisk/ventries/VcentralSize/VcentralOffset/vcommentLength', substr($contents, $endRecordPosition + 4, 18));
+        if (!is_array($endRecord)
+            || ($endRecord['entries'] ?? 0) === 0xffff
+            || ($endRecord['centralOffset'] ?? 0) === 0xffffffff
+            || ($endRecord['centralSize'] ?? 0) === 0xffffffff) {
+            return null;
+        }
+
+        $centralOffset = (int) $endRecord['centralOffset'];
+        $centralEnd = $centralOffset + (int) $endRecord['centralSize'];
+        if ($centralOffset < 0 || $centralEnd > $endRecordPosition) {
+            return null;
+        }
+
+        $offset = $centralOffset;
+        for ($index = 0; $index < (int) $endRecord['entries'] && $offset + 46 <= $centralEnd; $index++) {
+            if (substr($contents, $offset, 4) !== "PK\x01\x02") {
+                return null;
+            }
+
+            $header = unpack('vflags/vmethod/x4/Vcrc/Vcompressed/Vuncompressed/vnameLength/vextraLength/vcommentLength/x8/VlocalOffset', substr($contents, $offset + 8, 38));
+            if (!is_array($header)) {
+                return null;
+            }
+
+            $nameLength = (int) $header['nameLength'];
+            $extraLength = (int) $header['extraLength'];
+            $commentLength = (int) $header['commentLength'];
+            $name = substr($contents, $offset + 46, $nameLength);
+
+            if ($name === $entryName) {
+                $compressedSize = (int) $header['compressed'];
+                $uncompressedSize = (int) $header['uncompressed'];
+                $localOffset = (int) $header['localOffset'];
+                if ($uncompressedSize > 1048576 || $localOffset + 30 > $archiveLength
+                    || substr($contents, $localOffset, 4) !== "PK\x03\x04") {
+                    return null;
+                }
+
+                $localHeader = unpack('vflags/vmethod/x16/vnameLength/vextraLength', substr($contents, $localOffset + 6, 24));
+                if (!is_array($localHeader)) {
+                    return null;
+                }
+
+                $dataOffset = $localOffset + 30 + (int) $localHeader['nameLength'] + (int) $localHeader['extraLength'];
+                if ($compressedSize > $archiveLength || $dataOffset + $compressedSize > $archiveLength) {
+                    return null;
+                }
+
+                $data = substr($contents, $dataOffset, $compressedSize);
+                $result = match ((int) $header['method']) {
+                    0 => $data,
+                    8 => gzinflate($data),
+                    default => null,
+                };
+
+                return is_string($result) && strlen($result) === $uncompressedSize ? $result : null;
+            }
+
+            $offset += 46 + $nameLength + $extraLength + $commentLength;
+        }
+
+        return null;
     }
 
     private function readYamlScalar(string $yaml, string $key): ?string
