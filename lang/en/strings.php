@@ -63,6 +63,7 @@ return [
         'install' => 'Install',
         'installed' => 'Installed',
         'update' => 'Update',
+        'manual_spigot_update' => 'Open SpigotMC for a manual download',
         'uninstall' => 'Uninstall',
         'versions' => 'Version Selection',
     ],
@@ -74,6 +75,7 @@ return [
         'source_modrinth' => 'Modrinth',
         'source_hangar' => 'Hangar',
         'source_spigot' => 'Spigot',
+        'source_builtbybit' => 'BuiltByBit',
     ],
 
     'modals' => [

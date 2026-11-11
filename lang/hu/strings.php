@@ -63,6 +63,7 @@ return [
         'install' => 'Telepítés',
         'installed' => 'Telepítve',
         'update' => 'Frissítés',
+        'manual_spigot_update' => 'Nyisd meg a SpigotMC oldalt a kézi letöltéshez',
         'uninstall' => 'Eltávolítás',
         'versions' => 'Verzió kiválasztása',
     ],
@@ -74,6 +75,7 @@ return [
         'source_modrinth' => 'Modrinth',
         'source_hangar' => 'Hangar',
         'source_spigot' => 'Spigot',
+        'source_builtbybit' => 'BuiltByBit',
     ],
 
     'modals' => [

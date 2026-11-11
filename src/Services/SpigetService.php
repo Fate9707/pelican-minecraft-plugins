@@ -20,8 +20,8 @@ class SpigetService
             return null;
         }
 
-        $cacheKey = 'spiget_find_project:v3:'.md5($expected);
-        $project = cache()->remember($cacheKey, now()->addMinutes(10), function () use ($name, $expected) {
+        $cacheKey = 'spiget_find_project:v5:'.md5($expected);
+        $project = cache()->remember($cacheKey, now()->addMinute(), function () use ($name, $expected) {
             try {
                 $response = Http::acceptJson()
                     ->withUserAgent('pelican-minecraft-plugins')
@@ -36,10 +36,18 @@ class SpigetService
                         'fields' => self::RESOURCE_FIELDS,
                     ]);
 
-                foreach ($this->extractResources($response->json()) as $resource) {
-                    if ($this->normalizeProjectName((string) ($resource['name'] ?? '')) === $expected) {
-                        return $this->normalizeProject($resource);
-                    }
+                $resources = $this->extractResources($response->json());
+                $exactMatches = array_values(array_filter(
+                    $resources,
+                    fn (array $resource) => $this->normalizeProjectName((string) ($resource['name'] ?? '')) === $expected
+                ));
+
+                if (count($exactMatches) === 1) {
+                    return $this->normalizeProject($exactMatches[0]);
+                }
+
+                if (count($exactMatches) > 1) {
+                    return [];
                 }
             } catch (\Throwable $exception) {
                 report($exception);
@@ -95,7 +103,7 @@ class SpigetService
 
         $query = trim((string) $search);
         $cacheSuffix = md5(json_encode([$minecraftVersion, $page, $query]));
-        $cacheKey = 'spiget_projects:v8:'.$cacheSuffix;
+        $cacheKey = 'spiget_projects:v9:'.$cacheSuffix;
         $staleCacheKey = 'spiget_projects_stale:v3:'.$cacheSuffix;
 
         return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($minecraftVersion, $page, $query, $staleCacheKey) {
@@ -135,7 +143,9 @@ class SpigetService
         }
 
         $minecraftVersion = app(MinecraftModrinthService::class)->getMinecraftVersion($server);
-        $cacheKey = "spiget_versions:v4:$resourceId:$minecraftVersion";
+        // Invalidate cached version entries created before Spiget's proxy
+        // download URL was added to older versions.
+        $cacheKey = "spiget_versions:v11:$resourceId:$minecraftVersion";
 
         return cache()->remember($cacheKey, now()->addMinutes(30), function () use ($resourceId, $minecraftVersion) {
             try {
@@ -168,17 +178,51 @@ class SpigetService
                 }
 
                 $normalized = [];
+                $hasLatestCdnDownload = false;
                 foreach ($versions as $version) {
                     if (!is_array($version) || !$this->versionMatches($minecraftVersion, $resource['testedVersions'] ?? [])) {
                         continue;
                     }
 
                     $versionId = (string) ($version['id'] ?? '');
-                    $files = $versionId !== '' && empty($resource['premium']) ? [[
-                        'primary' => true,
-                        'filename' => 'spigot-'.$resourceId.'-'.$versionId.'.jar',
-                        'url' => self::API.'/resources/'.$resourceId.'/versions/'.$versionId.'/download',
-                    ]] : [];
+                    $files = [];
+                    if ($versionId !== '' && empty($resource['premium'])) {
+                        $apiDownloadUrl = self::API.'/resources/'.$resourceId.'/versions/'.$versionId.'/download';
+                        $downloadUrl = $apiDownloadUrl;
+                        $fallbackUrl = null;
+
+                        // SpigotMC can return 403 to Wings' downloader. Try
+                        // Spiget's CDN for the newest compatible file first,
+                        // then use Spiget's proxy for older versions hosted on
+                        // SpigotMC. Keep the regular API URL as a fallback for
+                        // external resources or unavailable proxy downloads.
+                        if (!$hasLatestCdnDownload) {
+                            $downloadUrl = 'https://cdn.spiget.org/file/spiget-resources/'.$resourceId.'.jar';
+                            $fallbackUrl = $apiDownloadUrl;
+                            $hasLatestCdnDownload = true;
+                        } else {
+                            // The external flag is not reliable enough to
+                            // decide whether Wings can fetch historical files.
+                            // Route every older Spigot version through Spiget's
+                            // proxy from the panel.
+                            $downloadUrl = $apiDownloadUrl.'/proxy';
+                            $fallbackUrl = $apiDownloadUrl;
+                        }
+
+                        $file = [
+                            'primary' => true,
+                            'filename' => 'spigot-'.$resourceId.'-'.$versionId.'.jar',
+                            'url' => $downloadUrl,
+                        ];
+                        if ($fallbackUrl !== null) {
+                            $file['fallback_url'] = $fallbackUrl;
+                        }
+                        if (str_ends_with($downloadUrl, '/proxy')) {
+                            $file['download_via_panel'] = true;
+                        }
+
+                        $files[] = $file;
+                    }
 
                     $normalized[] = [
                         'id' => $versionId,
@@ -383,6 +427,15 @@ class SpigetService
             }
         }
 
+        $uniqueMatches = [];
+        foreach ($matches as $resource) {
+            $id = (string) ($resource['id'] ?? '');
+            if ($id !== '') {
+                $uniqueMatches[$id] = $resource;
+            }
+        }
+
+        $matches = array_values($uniqueMatches);
         $total = count($matches);
         $hits = array_slice($matches, (max(1, $page) - 1) * 20, 20);
 

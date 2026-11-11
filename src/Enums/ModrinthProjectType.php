@@ -33,13 +33,27 @@ enum ModrinthProjectType: string implements HasLabel
     {
         $server->loadMissing('egg');
 
-        $features = $server->egg->features ?? [];
-        $tags = $server->egg->tags ?? [];
+        $features = $server->egg?->features ?? [];
+        $tags = $server->egg?->tags ?? [];
 
-        if (in_array('modrinth_plugins', $features) || (in_array('minecraft', $tags) && in_array('plugins', $features))) {
+        // Egg metadata varies between Pelican installations. Prefer the
+        // explicit plugin feature when present, then fall back to the known
+        // Minecraft plugin loaders so the page doesn't disappear when an egg
+        // omits or renames its feature tags.
+        if (is_string($features)) {
+            $features = json_decode($features, true) ?: [];
+        }
+
+        if (is_string($tags)) {
+            $tags = json_decode($tags, true) ?: [];
+        }
+
+        if (is_array($features)
+            && (in_array('modrinth_plugins', $features, true)
+                || (is_array($tags) && in_array('minecraft', $tags, true) && in_array('plugins', $features, true)))) {
             return self::Plugin;
         }
 
-        return null;
+        return MinecraftLoader::fromServer($server) !== null ? self::Plugin : null;
     }
 }

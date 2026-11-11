@@ -16,7 +16,7 @@ class HangarService
             return null;
         }
 
-        $cacheKey = 'hangar_find_project:'.md5($expected);
+        $cacheKey = 'hangar_find_project:v3:'.md5($expected);
 
         return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($name, $expected) {
             try {
@@ -36,28 +36,21 @@ class HangarService
                     return null;
                 }
 
-                foreach ($response['result'] ?? [] as $project) {
-                    if (!is_array($project) || $this->normalizeProjectName((string) ($project['name'] ?? '')) !== $expected) {
-                        continue;
-                    }
+                $projects = array_values(array_filter(
+                    $response['result'] ?? [],
+                    fn ($project) => is_array($project) && !empty($project['name'])
+                ));
+                $exactMatches = array_values(array_filter(
+                    $projects,
+                    fn (array $project) => $this->normalizeProjectName((string) $project['name']) === $expected
+                ));
 
-                    $namespace = $project['namespace'] ?? [];
-                    $slug = $namespace['slug'] ?? $project['slug'] ?? $project['name'];
-                    $owner = $namespace['owner'] ?? $project['owner'] ?? '';
+                if (count($exactMatches) === 1) {
+                    return $this->normalizeProject($exactMatches[0]);
+                }
 
-                    return [
-                        'project_id' => 'hangar:'.$slug,
-                        'slug' => (string) $slug,
-                        'hangar_path' => trim($owner.'/'.$slug, '/'),
-                        'title' => $project['name'],
-                        'description' => $project['description'] ?? '',
-                        'icon_url' => $project['avatarUrl'] ?? null,
-                        'author' => $owner,
-                        'downloads' => $project['stats']['downloads'] ?? 0,
-                        'date_modified' => $project['lastUpdated'] ?? $project['createdAt'] ?? null,
-                        'project_type' => 'plugin',
-                        'provider' => 'hangar',
-                    ];
+                if (count($exactMatches) > 1) {
+                    return null;
                 }
             } catch (\Throwable $exception) {
                 report($exception);
@@ -70,6 +63,30 @@ class HangarService
     private function normalizeProjectName(string $name): string
     {
         return preg_replace('/[^a-z0-9]+/', '', strtolower($name)) ?? '';
+    }
+
+    /** @param array<string, mixed> $project
+     *  @return array<string, mixed>
+     */
+    private function normalizeProject(array $project): array
+    {
+        $namespace = $project['namespace'] ?? [];
+        $slug = $namespace['slug'] ?? $project['slug'] ?? $project['name'];
+        $owner = $namespace['owner'] ?? $project['owner'] ?? '';
+
+        return [
+            'project_id' => 'hangar:'.$slug,
+            'slug' => (string) $slug,
+            'hangar_path' => trim($owner.'/'.$slug, '/'),
+            'title' => $project['name'],
+            'description' => $project['description'] ?? '',
+            'icon_url' => $project['avatarUrl'] ?? null,
+            'author' => $owner,
+            'downloads' => $project['stats']['downloads'] ?? 0,
+            'date_modified' => $project['lastUpdated'] ?? $project['createdAt'] ?? null,
+            'project_type' => 'plugin',
+            'provider' => 'hangar',
+        ];
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */

@@ -759,6 +759,34 @@ class MinecraftModrinthService
         }
     }
 
+    public function removePluginMetadataByFilename(Server $server, DaemonFileRepository $fileRepository, string $filename, ?ModrinthProjectType $type = null): bool
+    {
+        try {
+            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $filename, $type) {
+                $metadata = [
+                    'installed_mods' => $this->getInstalledPluginsMetadata($server, $fileRepository, $type),
+                ];
+
+                $metadata['installed_mods'] = collect($metadata['installed_mods'])
+                    ->reject(fn ($plugin) => strtolower((string) ($plugin['filename'] ?? '')) === strtolower($filename))
+                    ->values()
+                    ->all();
+
+                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
+                $response = $fileRepository->setServer($server)->putContent(
+                    $metadataPath,
+                    json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+                );
+
+                return !$response->failed();
+            }) === true;
+        } catch (Exception $exception) {
+            report($exception);
+
+            return false;
+        }
+    }
+
     /** @return array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
     public function getInstalledMod(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null): ?array
     {
