@@ -4,6 +4,7 @@ namespace FateFighter\MinecraftPlugins\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
+use FateFighter\MinecraftPlugins\Enums\MinecraftLoader;
 use FateFighter\MinecraftPlugins\Enums\ModrinthProjectType;
 use Exception;
 use Illuminate\Support\Facades\Cache;
@@ -36,14 +37,22 @@ class MinecraftModrinthService
 
         $minecraftLoader = $type->getModrinthLoader($server);
         $projectType = $type->value;
-        $minecraftVersion = $this->getMinecraftVersion($server);
+        // `plugin` is represented in all_project_types; project_type only
+        // describes the primary type (for example mod/resourcepack/shader).
+        $projectTypeFacet = $projectType === 'plugin' ? 'all_project_types' : 'project_type';
+        // Proxy software has its own version scheme. Do not filter proxy
+        // plugins by the backend Minecraft version or a configured default.
+        $loader = MinecraftLoader::fromServer($server);
+        $minecraftVersion = $loader?->isProxy() ? null : $this->getMinecraftVersion($server);
 
         if (!$minecraftLoader) {
             // Keep discovery usable even when the egg does not expose its loader.
             // Installation/version selection still needs a detected loader.
-            $facets = "[[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
+            $facets = "[[\"versions:$minecraftVersion\"],[\"{$projectTypeFacet}:{$projectType}\"]]";
+        } elseif ($minecraftVersion !== null) {
+            $facets = "[[\"categories:$minecraftLoader\"],[\"versions:$minecraftVersion\"],[\"{$projectTypeFacet}:{$projectType}\"]]";
         } else {
-            $facets = "[[\"categories:$minecraftLoader\"],[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
+            $facets = "[[\"categories:$minecraftLoader\"],[\"{$projectTypeFacet}:{$projectType}\"]]";
         }
 
         $data = [
@@ -52,7 +61,7 @@ class MinecraftModrinthService
             'facets' => $facets,
         ];
 
-        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'unknown') . ":$page";
+        $key = "modrinth_projects:v2:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'unknown') . ":$page";
 
         if ($search) {
             $data['query'] = $search;
@@ -87,16 +96,23 @@ class MinecraftModrinthService
             return null;
         }
 
-        $projects = Cache::remember('modrinth_find_name:'.md5($expected), now()->addMinutes(10), function () use ($name, $type, $server) {
+        $projectType = $type?->value ?? ModrinthProjectType::fromServer($server)?->value ?? 'plugin';
+        $projects = Cache::remember('modrinth_find_name:v5:'.md5($expected.':'.$projectType), now()->addMinutes(10), function () use ($name, $projectType) {
             try {
+                $projectTypeFacet = $projectType === 'plugin' ? 'all_project_types' : 'project_type';
+
                 return Http::asJson()
                     ->timeout(10)
                     ->connectTimeout(5)
                     ->throw()
                     ->get('https://api.modrinth.com/v2/search', [
                         'query' => $name,
-                        'limit' => 20,
-                        'facets' => '[ ["project_type:'.($type?->value ?? ModrinthProjectType::fromServer($server)?->value ?? 'plugin').'" ] ]',
+                        // Search responses are relevance-ranked. A common
+                        // plugin can fall below the first page, so inspect
+                        // the API's full supported search window before
+                        // deciding that a project is absent.
+                        'limit' => 100,
+                        'facets' => '[ ["'.$projectTypeFacet.':'.$projectType.'" ] ]',
                     ])
                     ->json();
             } catch (Exception $exception) {
@@ -105,6 +121,8 @@ class MinecraftModrinthService
                 return ['hits' => []];
             }
         });
+        $exactMatches = [];
+        $prefixMatches = [];
         foreach (is_array($projects) ? ($projects['hits'] ?? []) : [] as $project) {
             if (!is_array($project)) {
                 continue;
@@ -112,16 +130,63 @@ class MinecraftModrinthService
 
             $title = preg_replace('/[^a-z0-9]+/', '', strtolower((string) ($project['title'] ?? ''))) ?? '';
             $slug = preg_replace('/[^a-z0-9]+/', '', strtolower((string) ($project['slug'] ?? ''))) ?? '';
-            if ($title !== $expected && $slug !== $expected) {
-                continue;
+            if ($title === $expected || $slug === $expected) {
+                $exactMatches[(string) ($project['project_id'] ?? $project['id'] ?? $slug)] = $project;
+            } elseif (strlen($expected) >= 5 && (
+                str_starts_with($title, $expected)
+                || str_starts_with($slug, $expected)
+                || str_contains($title, $expected)
+                || str_contains($slug, $expected)
+            )) {
+                $prefixMatches[(string) ($project['project_id'] ?? $project['id'] ?? $slug)] = $project;
             }
+        }
 
+        // Exact IDs/titles always win. Some projects add subtitles to their
+        // marketplace title; only accept that case when one unique long-name
+        // prefix match remains, avoiding guesses for short/common names.
+        $matches = count($exactMatches) === 1 ? $exactMatches : (count($exactMatches) === 0 && count($prefixMatches) === 1 ? $prefixMatches : []);
+        if ($matches !== []) {
+            $project = reset($matches);
             $project['provider'] = 'modrinth';
 
             return $project;
         }
 
         return null;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function findProjectById(string $projectId): ?array
+    {
+        $projectId = trim($projectId);
+        if ($projectId === '') {
+            return null;
+        }
+
+        return Cache::remember('modrinth_project_by_id:v1:'.sha1($projectId), now()->addMinutes(30), function () use ($projectId) {
+            try {
+                $project = Http::asJson()
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->get('https://api.modrinth.com/v2/project/'.rawurlencode($projectId))
+                    ->json();
+
+                if (!is_array($project) || empty($project['id'])) {
+                    return null;
+                }
+
+                $project['project_id'] = $project['id'];
+                $project['provider'] = 'modrinth';
+
+                return $project;
+            } catch (Exception $exception) {
+                report($exception);
+
+                return null;
+            }
+        });
     }
 
     /**
@@ -221,7 +286,7 @@ class MinecraftModrinthService
     }
 
     /** @return array<int, mixed> */
-    public function getModrinthVersions(string $projectId, Server $server, ?ModrinthProjectType $type = null): array
+    public function getModrinthVersions(string $projectId, Server $server, ?ModrinthProjectType $type = null, bool $forSourceDetection = false): array
     {
         $type ??= ModrinthProjectType::fromServer($server);
         $minecraftLoader = $type?->getModrinthLoader($server);
@@ -230,14 +295,17 @@ class MinecraftModrinthService
             return [];
         }
 
-        $minecraftVersion = $this->getMinecraftVersion($server);
+        $loader = MinecraftLoader::fromServer($server);
+        $minecraftVersion = $loader?->isProxy() ? null : $this->getMinecraftVersion($server);
 
-        $data = [
-            'game_versions' => "[\"$minecraftVersion\"]",
-            'loaders' => "[\"$minecraftLoader\"]",
-        ];
+        $data = ['loaders' => json_encode([$minecraftLoader])];
+        if ($minecraftVersion !== null && !$forSourceDetection) {
+            $data['game_versions'] = json_encode([$minecraftVersion]);
+        }
 
-        return cache()->remember("modrinth_versions:$projectId:$minecraftVersion:$minecraftLoader", now()->addMinutes(30), function () use ($projectId, $data) {
+        $versionCacheKey = $forSourceDetection ? 'all' : ($minecraftVersion ?? 'any');
+
+        return cache()->remember("modrinth_versions:v2:$projectId:$versionCacheKey:$minecraftLoader", now()->addMinutes(30), function () use ($projectId, $data) {
             try {
                 $versions = Http::asJson()
                     ->timeout(5)
@@ -640,6 +708,13 @@ class MinecraftModrinthService
 
             foreach ($metadata['installed_mods'] as $entry) {
                 if (!is_array($entry)) {
+                    continue;
+                }
+
+                // This manager only tracks projects hosted on Modrinth. Older
+                // metadata may still contain provider-prefixed Hangar/Spigot
+                // identifiers; leave those JARs to the untracked-file flow.
+                if (str_contains((string) ($entry['project_id'] ?? ''), ':')) {
                     continue;
                 }
 

@@ -35,18 +35,11 @@
         <button type="button" class="pm-tab {{ $updatesOnly ? 'active' : '' }}" wire:click="showPluginUpdates">↻ {{ trans('pelican-minecraft-plugins::strings.page.updates') }} <span class="pm-tab-count">{{ $availableUpdatesCount ?? 0 }}</span></button>
     </nav>
     <section class="pm-main">
-        @if ($pluginServer && $activeTab !== 'installed')
-            <div class="pm-providers" role="group" aria-label="{{ trans('pelican-minecraft-plugins::strings.page.sources') }}">
-                <button type="button" class="pm-provider modrinth {{ $source === 'modrinth' ? 'selected' : '' }}" wire:click="switchSource('modrinth')"><span class="pm-provider-mark">◉</span><span class="pm-provider-name">Modrinth</span><span class="pm-provider-desc">{{ trans('pelican-minecraft-plugins::strings.page.modrinth_description') }}</span><span class="pm-provider-check">{{ $source === 'modrinth' ? '✓' : '' }}</span></button>
-                <button type="button" class="pm-provider hangar {{ $source === 'hangar' ? 'selected hangar' : '' }}" wire:click="switchSource('hangar')"><span class="pm-provider-mark">➤</span><span class="pm-provider-name">Hangar</span><span class="pm-provider-desc">{{ trans('pelican-minecraft-plugins::strings.page.hangar_description') }}</span><span class="pm-provider-check">{{ $source === 'hangar' ? '✓' : '' }}</span></button>
-                <button type="button" class="pm-provider spigot {{ $source === 'spigot' ? 'selected' : '' }}" wire:click="switchSource('spigot')"><span class="pm-provider-mark">⚒</span><span class="pm-provider-name">Spigot</span><span class="pm-provider-desc">{{ trans('pelican-minecraft-plugins::strings.page.spigot_description') }}</span><span class="pm-provider-check">{{ $source === 'spigot' ? '✓' : '' }}</span></button>
-            </div>
-        @endif
         <div class="pm-filterbar">
             <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.version') }}:</strong><span>{{ $minecraftVersion ?? trans('pelican-minecraft-plugins::strings.page.unknown') }}</span></span>
             <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.server_type') }}:</strong><span>{{ $loader?->getLabel() ?? trans('pelican-minecraft-plugins::strings.page.unknown') }}</span></span>
             @if ($activeTab !== 'installed')
-                <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.source') }}:</strong><span>{{ ucfirst($source) }}</span></span>
+                <span class="pm-filter-pill"><strong>{{ trans('pelican-minecraft-plugins::strings.page.source') }}:</strong><span>Modrinth</span></span>
             @endif
         </div>
     </section>

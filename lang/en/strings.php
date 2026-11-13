@@ -25,8 +25,6 @@ return [
         'supported_sources' => 'Supported sources',
         'open_plugin_folder' => 'Open plugin folder',
         'modrinth_description' => 'Plugins',
-        'hangar_description' => 'Paper / Velocity plugins',
-        'spigot_description' => 'Classic plugins',
         'open_folder' => 'Open :folder folder',
         'minecraft_version' => 'Minecraft Version',
         'loader' => 'Loader',
@@ -63,7 +61,6 @@ return [
         'install' => 'Install',
         'installed' => 'Installed',
         'update' => 'Update',
-        'manual_spigot_update' => 'Open SpigotMC for a manual download',
         'uninstall' => 'Uninstall',
         'versions' => 'Version Selection',
     ],
@@ -73,9 +70,6 @@ return [
         'not_tracked' => 'Not tracked by this source',
         'unknown_source' => 'Source could not be identified',
         'source_modrinth' => 'Modrinth',
-        'source_hangar' => 'Hangar',
-        'source_spigot' => 'Spigot',
-        'source_builtbybit' => 'BuiltByBit',
     ],
 
     'modals' => [

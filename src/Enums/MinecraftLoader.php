@@ -23,6 +23,11 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
         return str($this->name)->title();
     }
 
+    public function isProxy(): bool
+    {
+        return in_array($this, [self::Velocity, self::Waterfall, self::Bungeecord], true);
+    }
+
     public function getIcon(): string
     {
         return match ($this) {
@@ -43,6 +48,14 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
         $server->loadMissing('egg');
 
         $tags = $server->egg?->tags ?? [];
+        if (is_string($tags)) {
+            $tags = json_decode($tags, true) ?: [];
+        }
+
+        if (!is_array($tags)) {
+            $tags = [];
+        }
+
         $loader = self::fromTags($tags);
 
         if ($loader) {
@@ -55,25 +68,25 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
     /** @param string[] $tags */
     public static function fromTags(array $tags): ?MinecraftLoader
     {
-        $tags = array_map(static fn (string $tag) => strtolower(trim($tag)), $tags);
+        $tags = array_map(static fn ($tag) => strtolower(trim((string) $tag)), $tags);
 
         foreach ([
+            self::Velocity,
+            self::Waterfall,
+            self::Bungeecord,
             self::Folia,
             self::Purpur,
             self::Paper,
             self::Bukkit,
             self::Spigot,
             self::Sponge,
-            self::Velocity,
-            self::Waterfall,
-            self::Bungeecord,
         ] as $loader) {
             if (in_array($loader->value, $tags, true)) {
                 return $loader;
             }
         }
 
-        return in_array('leaf', $tags, true) ? self::Paper : null;
+        return count(array_intersect($tags, ['leaf', 'pufferfish', 'gale'])) > 0 ? self::Paper : null;
     }
 
     private static function fromEggName(string $name): ?MinecraftLoader
@@ -81,15 +94,15 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
         $name = strtolower($name);
 
         return match (true) {
-            str_contains($name, 'folia') => self::Folia,
-            str_contains($name, 'purpur') => self::Purpur,
-            str_contains($name, 'paper'), str_contains($name, 'leaf') => self::Paper,
-            str_contains($name, 'spigot') => self::Spigot,
-            str_contains($name, 'bukkit') => self::Bukkit,
-            str_contains($name, 'sponge') => self::Sponge,
             str_contains($name, 'velocity') => self::Velocity,
             str_contains($name, 'waterfall') => self::Waterfall,
             str_contains($name, 'bungeecord'), str_contains($name, 'bungee') => self::Bungeecord,
+            str_contains($name, 'folia') => self::Folia,
+            str_contains($name, 'purpur') => self::Purpur,
+            str_contains($name, 'paper'), str_contains($name, 'leaf'), str_contains($name, 'pufferfish'), str_contains($name, 'gale') => self::Paper,
+            str_contains($name, 'spigot') => self::Spigot,
+            str_contains($name, 'bukkit') => self::Bukkit,
+            str_contains($name, 'sponge') => self::Sponge,
             default => null,
         };
     }

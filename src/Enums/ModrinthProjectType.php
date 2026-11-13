@@ -36,6 +36,8 @@ enum ModrinthProjectType: string implements HasLabel
         $features = $server->egg?->features ?? [];
         $tags = $server->egg?->tags ?? [];
 
+        $loader = MinecraftLoader::fromServer($server);
+
         // Egg metadata varies between Pelican installations. Prefer the
         // explicit plugin feature when present, then fall back to the known
         // Minecraft plugin loaders so the page doesn't disappear when an egg
@@ -54,6 +56,6 @@ enum ModrinthProjectType: string implements HasLabel
             return self::Plugin;
         }
 
-        return MinecraftLoader::fromServer($server) !== null ? self::Plugin : null;
+        return $loader !== null ? self::Plugin : null;
     }
 }

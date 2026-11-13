@@ -25,8 +25,6 @@ return [
         'supported_sources' => 'Támogatott források',
         'open_plugin_folder' => 'Pluginmappa megnyitása',
         'modrinth_description' => 'Minecraft pluginok',
-        'hangar_description' => 'Paper / Velocity pluginok',
-        'spigot_description' => 'Klasszikus pluginok',
         'open_folder' => ':folder mappa megnyitása',
         'minecraft_version' => 'Minecraft-verzió',
         'loader' => 'Betöltő',
@@ -63,7 +61,6 @@ return [
         'install' => 'Telepítés',
         'installed' => 'Telepítve',
         'update' => 'Frissítés',
-        'manual_spigot_update' => 'Nyisd meg a SpigotMC oldalt a kézi letöltéshez',
         'uninstall' => 'Eltávolítás',
         'versions' => 'Verzió kiválasztása',
     ],
@@ -73,9 +70,6 @@ return [
         'not_tracked' => 'Nincs követve ezen a forráson',
         'unknown_source' => 'A forrás nem azonosítható',
         'source_modrinth' => 'Modrinth',
-        'source_hangar' => 'Hangar',
-        'source_spigot' => 'Spigot',
-        'source_builtbybit' => 'BuiltByBit',
     ],
 
     'modals' => [

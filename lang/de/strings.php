@@ -25,8 +25,6 @@ return [
         'supported_sources' => 'Unterstützte Quellen',
         'open_plugin_folder' => 'Pluginordner öffnen',
         'modrinth_description' => 'Plugins',
-        'hangar_description' => 'Paper / Velocity Plugins',
-        'spigot_description' => 'Klassische Plugins',
         'open_folder' => ':folder-Ordner öffnen',
         'minecraft_version' => 'Minecraft-Version',
         'loader' => 'Loader',
@@ -72,8 +70,6 @@ return [
         'not_tracked' => 'Von dieser Quelle nicht erfasst',
         'unknown_source' => 'Quelle konnte nicht erkannt werden',
         'source_modrinth' => 'Modrinth',
-        'source_hangar' => 'Hangar',
-        'source_spigot' => 'Spigot',
     ],
 
     'modals' => [
