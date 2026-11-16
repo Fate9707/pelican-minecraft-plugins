@@ -2,15 +2,17 @@
 
 Manage Minecraft server plugins from the Pelican Panel. Find a plugin, compare compatible releases, and install or update it without handling the download manually.
 
-## Plugin source
+## Plugin sources
 
-- **Modrinth** — search Minecraft plugin projects, choose a compatible release, and install or update it from the panel.
+- **Modrinth** — search plugin projects and choose a release that matches the server.
+- **Hangar** — browse Paper ecosystem plugins and their available versions.
+- **Spigot (beta)** — look up Spigot resources and install supported releases. Spigot support is still in beta.
 
 ## Using the plugin
 
 Install this package in Pelican's Plugin Manager, then open the plugin management page for a Minecraft server. The server egg must identify the server as Minecraft and expose plugin support. For Modrinth, enable the `modrinth_plugins` egg feature (or the Minecraft `plugins` feature).
 
-The manager uses Modrinth for plugin search, version selection, installation, update checks, and installed-plugin identification. Plugins hosted only on other sites are not available through this manager.
+The manager presents plugins available for that server and provides actions to install, update, and remove supported entries. Version compatibility depends on the information supplied by each source.
 
 This manager lists and handles server plugins only.
 
