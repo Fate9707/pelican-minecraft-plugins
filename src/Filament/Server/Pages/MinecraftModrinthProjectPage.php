@@ -1872,9 +1872,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ] : [])
                             ->extraAttributes([
                                 'wire:click' => "switchSource('modrinth')",
-                                'class' => 'cursor-pointer '.($this->source === 'modrinth' ? 'ring-2 ring-primary-500' : ''),
+                                'class' => 'cursor-pointer',
                             ]),
-                        Section::make(new HtmlString('<span class="inline-flex items-center gap-2"><img src="https://hangar.papermc.io/_nuxt/hangar-logo.DNKyJEtq.svg" alt="" width="20" height="20" class="object-contain">Hangar</span>'))
+                        Section::make(new HtmlString('<span class="inline-flex items-center gap-2"><img src="https://hangar.papermc.io/_nuxt/hangar-logo.DNKyJEtq.svg" alt="" width="24" height="24" class="size-6 shrink-0 object-contain">Hangar</span>'))
                             ->description('Paper / Velocity plugins')
                             ->headerActions($this->source === 'hangar' ? [
                                 Action::make('active_hangar_source')
@@ -1886,7 +1886,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ] : [])
                             ->extraAttributes([
                                 'wire:click' => "switchSource('hangar')",
-                                'class' => 'cursor-pointer '.($this->source === 'hangar' ? 'ring-2 ring-primary-500' : ''),
+                                'class' => 'cursor-pointer',
                             ]),
                     ])
                     ->visible(static::detectProjectType($server) === ModrinthProjectType::Plugin)
