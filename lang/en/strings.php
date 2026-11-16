@@ -16,6 +16,7 @@ return [
         'manager_subtitle' => 'Find, install, update, and manage plugins directly from the Pelican Panel.',
         'sources' => 'Plugin sources',
         'source' => 'Source',
+        'source_selected' => 'Selected',
         'version' => 'Version',
         'server_type' => 'Server type',
         'server_information' => 'Server information',
@@ -23,6 +24,7 @@ return [
         'total_plugins' => 'Total plugins',
         'available_updates' => 'Available updates',
         'supported_sources' => 'Supported sources',
+        'statistics' => 'Plugin statistics',
         'open_plugin_folder' => 'Open plugin folder',
         'modrinth_description' => 'Plugins',
         'open_folder' => 'Open :folder folder',
@@ -70,6 +72,7 @@ return [
         'not_tracked' => 'Not tracked by this source',
         'unknown_source' => 'Source could not be identified',
         'source_modrinth' => 'Modrinth',
+        'source_hangar' => 'Hangar',
     ],
 
     'modals' => [

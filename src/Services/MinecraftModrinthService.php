@@ -200,7 +200,6 @@ class MinecraftModrinthService
         }
 
         $projectIds = collect($installedPlugins)->pluck('project_id')->unique()->values()->all();
-
         $perPage = 20;
         $offset = ($page - 1) * $perPage;
         $pageIds = array_slice($projectIds, $offset, $perPage);
@@ -209,10 +208,11 @@ class MinecraftModrinthService
             return [];
         }
 
-        $idsParam = '["'.implode('","', $pageIds).'"]';
+        $pageModrinthIds = array_values(array_filter($pageIds, fn (string $projectId) => !str_contains($projectId, ':')));
+        $idsParam = '["'.implode('","', $pageModrinthIds).'"]';
         $key = 'modrinth_bulk:'.md5($idsParam);
 
-        $modrinthProjects = cache()->remember($key, now()->addMinutes(30), function () use ($idsParam) {
+        $modrinthProjects = $pageModrinthIds === [] ? [] : cache()->remember($key, now()->addMinutes(30), function () use ($idsParam) {
             try {
                 return Http::asJson()
                     ->timeout(10)
@@ -266,18 +266,22 @@ class MinecraftModrinthService
                 }
                 $results[] = $project;
             } else {
+                $isHangar = str_starts_with((string) $projectId, 'hangar:');
                 $results[] = [
                     'project_id' => $installedPlugin['project_id'],
                     'slug' => $installedPlugin['project_slug'],
                     'title' => $installedPlugin['project_title'],
-                    'description' => trans('pelican-minecraft-plugins::strings.page.plugin_unavailable'),
+                    'description' => $isHangar ? null : trans('pelican-minecraft-plugins::strings.page.plugin_unavailable'),
                     'icon_url' => null,
                     'author' => $installedPlugin['author'] ?? '',
                     'downloads' => 0,
                     'date_modified' => $installedPlugin['installed_at'],
                     'project_type' => '',
-                    'unavailable' => true,
-                    'provider' => 'modrinth',
+                    'unavailable' => !$isHangar,
+                    'provider' => $isHangar ? 'hangar' : 'modrinth',
+                    'hangar_path' => $isHangar
+                        ? trim(($installedPlugin['author'] ?? '').'/'.$installedPlugin['project_slug'], '/')
+                        : null,
                 ];
             }
         }
@@ -708,13 +712,6 @@ class MinecraftModrinthService
 
             foreach ($metadata['installed_mods'] as $entry) {
                 if (!is_array($entry)) {
-                    continue;
-                }
-
-                // This manager only tracks projects hosted on Modrinth. Older
-                // metadata may still contain provider-prefixed Hangar/Spigot
-                // identifiers; leave those JARs to the untracked-file flow.
-                if (str_contains((string) ($entry['project_id'] ?? ''), ':')) {
                     continue;
                 }
 

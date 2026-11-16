@@ -9,8 +9,6 @@ use Filament\Contracts\Plugin;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Panel;
-use Filament\View\PanelsRenderHook;
-use Illuminate\Support\HtmlString;
 
 class MinecraftPlugins implements HasPluginSettings, Plugin
 {
@@ -35,12 +33,10 @@ class MinecraftPlugins implements HasPluginSettings, Plugin
             'prefix' => 'mcloader',
         ]);
 
-        $panel->renderHook(
-            PanelsRenderHook::HEAD_END,
-            fn () => new HtmlString(
-                '<style>.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}</style>'
-            ),
-        );
+        app(BladeIconsFactory::class)->add('mcbrand', [
+            'path' => plugin_path($this->getId(), 'resources/icons/brands'),
+            'prefix' => 'mcbrand',
+        ]);
     }
 
     public function boot(Panel $panel): void

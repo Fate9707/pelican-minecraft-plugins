@@ -9,6 +9,7 @@ use App\Traits\Filament\BlockAccessInConflict;
 use FateFighter\MinecraftPlugins\Enums\MinecraftLoader;
 use FateFighter\MinecraftPlugins\Enums\ModrinthProjectType;
 use FateFighter\MinecraftPlugins\Facades\MinecraftModrinth;
+use FateFighter\MinecraftPlugins\Services\HangarService;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
@@ -16,6 +17,7 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Resources\Concerns\HasTabs;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
@@ -23,12 +25,15 @@ use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\ImageColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -48,7 +53,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** @var array<string> */
     public array $unknownFiles = [];
 
+    public string $source = 'modrinth';
+
     public bool $updatesOnly = false;
+
+    public int $availableUpdatesCount = 0;
+
+    public bool $availableUpdatesComputed = false;
+
+    /** @var array<int, string> */
+    public array $availableUpdateProjectIds = [];
+
+    protected $queryString = [
+        'source' => ['except' => 'modrinth'],
+    ];
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
 
@@ -101,26 +119,48 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return static::getNavigationLabel();
     }
 
+    public function getHeading(): ?string
+    {
+        return null;
+    }
+
     public function mount(): void
     {
-        /** @var Server $server */
-        $server = Filament::getTenant();
+        if (!in_array($this->source, ['modrinth', 'hangar'], true)
+            || static::detectProjectType(Filament::getTenant()) !== ModrinthProjectType::Plugin) {
+            $this->source = 'modrinth';
+        }
 
         $this->loadDefaultActiveTab();
+    }
+
+    public function switchSource(string $source): void
+    {
+        if (!in_array($source, ['modrinth', 'hangar'], true)
+            || static::detectProjectType(Filament::getTenant()) !== ModrinthProjectType::Plugin) {
+            return;
+        }
+
+        $this->source = $source;
+        $this->activeTab = 'all';
+        $this->updatesOnly = false;
+        $this->versionsCache = [];
+        $this->availableUpdatesComputed = false;
+        $this->setPage(1);
     }
 
     public function showAllPlugins(): void
     {
         $this->updatesOnly = false;
         $this->activeTab = 'all';
-        $this->resetPage();
+        $this->setPage(1);
     }
 
     public function showInstalledPlugins(): void
     {
         $this->updatesOnly = false;
         $this->activeTab = 'installed';
-        $this->resetPage();
+        $this->setPage(1);
     }
 
     public function showPluginUpdates(): void
@@ -129,7 +169,23 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->activeTab = 'installed';
         $this->installedPluginsMetadata = null;
         $this->versionsCache = [];
-        $this->resetPage();
+        $this->availableUpdatesComputed = false;
+        $this->setPage(1);
+
+        // Refresh the installed-file scan once when the Updates tab is opened.
+        // Rendering the page repeatedly should not trigger another daemon scan.
+        try {
+            /** @var Server $server */
+            $server = Filament::getTenant();
+            /** @var DaemonFileRepository $fileRepository */
+            $fileRepository = app(DaemonFileRepository::class);
+            MinecraftModrinth::scanAndImportPlugins($server, $fileRepository, static::detectProjectType($server));
+            $this->installedPluginsMetadata = null;
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        $this->availableUpdatesCount = $this->getAvailableUpdatesCount();
     }
 
     public function updatedActiveTab(?string $activeTab): void
@@ -257,6 +313,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** @return array<int, array<string, mixed>> */
     private function getProviderVersions(string $projectId, Server $server, bool $forSourceDetection = false): array
     {
+        if (str_starts_with($projectId, 'hangar:')) {
+            return app(HangarService::class)->getVersions(substr($projectId, 7), $server);
+        }
+
         if (str_contains($projectId, ':')) {
             return [];
         }
@@ -269,7 +329,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $projectId = (string) ($record['project_id'] ?? '');
 
-        if ($projectId === '' || str_contains($projectId, ':')) {
+        if ($projectId === '' || (str_contains($projectId, ':') && !str_starts_with($projectId, 'hangar:'))) {
             return false;
         }
 
@@ -278,7 +338,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     private function getAvailableUpdatesCount(): int
     {
-        $updates = 0;
+        if ($this->availableUpdatesComputed) {
+            return $this->availableUpdatesCount;
+        }
+
+        $this->availableUpdateProjectIds = [];
 
         foreach ($this->getInstalledPluginsMetadata() as $installedPlugin) {
             $projectId = (string) ($installedPlugin['project_id'] ?? '');
@@ -288,36 +352,48 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
             $versions = $this->getCachedVersions($projectId);
             if (isset($versions[0]['id']) && ($installedPlugin['version_id'] ?? null) !== $versions[0]['id']) {
-                $updates++;
+                $this->availableUpdateProjectIds[] = $projectId;
             }
         }
 
-        return $updates;
+        $this->availableUpdateProjectIds = array_values(array_unique($this->availableUpdateProjectIds));
+        $this->availableUpdatesCount = count($this->availableUpdateProjectIds);
+        $this->availableUpdatesComputed = true;
+
+        return $this->availableUpdatesCount;
     }
 
     /** @param array<string, mixed> $record */
     private function recordHasAvailableUpdate(array $record): bool
     {
         $projectId = (string) ($record['project_id'] ?? '');
-        if ($projectId === '') {
-            return false;
-        }
 
-        $installedPlugin = $this->getInstalledMod($projectId);
-        $versions = $this->getCachedVersions($projectId);
-
-        return $installedPlugin !== null
-            && isset($versions[0]['id'])
-            && $installedPlugin['version_id'] !== $versions[0]['id'];
+        return $projectId !== '' && in_array($projectId, $this->availableUpdateProjectIds, true);
     }
 
     /** @return array<string, mixed>|null */
-    private function discoverInstalledPluginSource(Server $server, DaemonFileRepository $fileRepository, string $filename): ?array
+    private function discoverInstalledPluginSource(Server $server, DaemonFileRepository $fileRepository, string $filename, ?string $fileFingerprint = null): ?array
     {
-        $jarIdentity = $this->readPluginIdentityFromJar($server, $fileRepository, $filename);
-        $jarHash = (string) ($jarIdentity['sha512'] ?? '');
         $cacheKey = 'plugin_source_detection:v21:'.$server->id.':'.sha1(strtolower($filename));
         $cachedCandidate = Cache::get($cacheKey);
+
+        // Reading a JAR through the daemon is expensive. The directory listing
+        // gives us a stable size/modified-time fingerprint, so reuse a previous
+        // successful or unresolved detection while that file remains unchanged.
+        if ($fileFingerprint !== null
+            && is_array($cachedCandidate)
+            && hash_equals((string) ($cachedCandidate['_source_detection_fingerprint'] ?? ''), $fileFingerprint)) {
+            if (!empty($cachedCandidate['unknown_source'])) {
+                return null;
+            }
+
+            if (!empty($cachedCandidate['_metadata_saved'])) {
+                return $cachedCandidate;
+            }
+        }
+
+        $jarIdentity = $this->readPluginIdentityFromJar($server, $fileRepository, $filename);
+        $jarHash = (string) ($jarIdentity['sha512'] ?? '');
         if (is_array($cachedCandidate)
             && (($cachedCandidate['artifact_sha512'] ?? null) !== $jarHash
                 || (($cachedCandidate['provider'] ?? 'modrinth') !== 'modrinth'))) {
@@ -388,7 +464,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 Cache::put($cacheKey, $candidate, now()->addHours(6));
             } else {
                 // Unknowns are retried on the next explicit rescan.
-                Cache::put($cacheKey, ['unknown_source' => true, 'artifact_sha512' => $jarHash], now()->addMinute());
+                Cache::put($cacheKey, [
+                    'unknown_source' => true,
+                    'artifact_sha512' => $jarHash,
+                    '_source_detection_fingerprint' => $fileFingerprint,
+                ], $fileFingerprint !== null ? now()->addMinutes(10) : now()->addMinute());
                 Log::warning('Plugin source detection unresolved', [
                     'server_id' => $server->id,
                     'filename' => $filename,
@@ -436,6 +516,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 'provider' => $candidate['provider'] ?? null,
                 'version_id' => $matchedVersion['id'] ?? null,
             ]);
+        } elseif ($fileFingerprint !== null) {
+            $candidate['_source_detection_fingerprint'] = $fileFingerprint;
+            $candidate['_metadata_saved'] = true;
+            Cache::put($cacheKey, $candidate, now()->addHours(6));
         }
 
         return $saved ? $candidate : null;
@@ -888,6 +972,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         if ($updatedCount > 0 || $failedCount > 0) {
             $this->installedPluginsMetadata = null;
             $this->versionsCache = [];
+            $this->availableUpdatesComputed = false;
         }
 
         return [
@@ -1018,13 +1103,46 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     /** @var DaemonFileRepository $fileRepository */
                     $fileRepository = app(DaemonFileRepository::class);
 
+                    $type = static::detectProjectType($server);
+                    $folder = $type ? MinecraftModrinth::getProjectFolder($server, $fileRepository, $type) : null;
+                    try {
+                        $contents = $folder !== null
+                            ? $fileRepository->setServer($server)->getDirectory($folder)
+                            : [];
+                    } catch (Exception $exception) {
+                        report($exception);
+                        $contents = [];
+                    }
+                    $fileFingerprints = [];
+                    foreach (is_array($contents) ? $contents : [] as $file) {
+                        if (!is_array($file) || empty($file['name']) || !isset($file['size'])) {
+                            continue;
+                        }
+
+                        $modifiedAt = $file['modified_at'] ?? $file['modified'] ?? $file['mtime'] ?? null;
+                        if ($modifiedAt === null) {
+                            continue;
+                        }
+
+                        $fileFingerprints[strtolower((string) $file['name'])] = sha1(implode('|', [
+                            (string) $file['name'],
+                            (string) $file['size'],
+                            (string) $modifiedAt,
+                        ]));
+                    }
+
                     $staleMetadataRemoved = false;
                     foreach ($installedPlugins as $plugin) {
                         if (!str_starts_with((string) ($plugin['version_id'] ?? ''), 'detected:')) {
                             continue;
                         }
 
-                        if ($this->discoverInstalledPluginSource($server, $fileRepository, $plugin['filename'])) {
+                        if ($this->discoverInstalledPluginSource(
+                            $server,
+                            $fileRepository,
+                            $plugin['filename'],
+                            $fileFingerprints[strtolower($plugin['filename'])] ?? null
+                        )) {
                             continue;
                         }
 
@@ -1041,6 +1159,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     if ($staleMetadataRemoved) {
                         Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, static::detectProjectType($server)));
                         $this->installedPluginsMetadata = null;
+                        $this->availableUpdatesComputed = false;
                         $installedPlugins = $this->getInstalledPluginsMetadata();
                     }
 
@@ -1051,6 +1170,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         // identify other sources from their JAR metadata.
                         $unknownFiles = MinecraftModrinth::scanAndImportPlugins($server, $fileRepository, static::detectProjectType($server));
                         $this->installedPluginsMetadata = null;
+                        $this->availableUpdatesComputed = false;
                         $installedPlugins = $this->getInstalledPluginsMetadata();
 
                         $importedCount = max(0, count($installedPlugins) - $metadataBefore);
@@ -1061,10 +1181,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 ->send();
                         }
 
-                        $type = static::detectProjectType($server);
                         if ($type) {
-                            $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
-                            $contents = $fileRepository->setServer($server)->getDirectory($folder);
                             $knownFilenames = array_fill_keys(array_map(
                                 fn (array $plugin) => strtolower($plugin['filename']),
                                 MinecraftModrinth::getInstalledPluginsMetadata($server, $fileRepository, $type)
@@ -1078,13 +1195,19 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $identifiedAny = false;
                             foreach ($unknownFiles as $filename) {
-                                if ($this->discoverInstalledPluginSource($server, $fileRepository, $filename)) {
+                                if ($this->discoverInstalledPluginSource(
+                                    $server,
+                                    $fileRepository,
+                                    $filename,
+                                    $fileFingerprints[strtolower($filename)] ?? null
+                                )) {
                                     $identifiedAny = true;
                                 }
                             }
 
                             if ($identifiedAny) {
                                 $this->installedPluginsMetadata = null;
+                                $this->availableUpdatesComputed = false;
                                 $installedPlugins = $this->getInstalledPluginsMetadata();
                                 $knownFilenames = array_fill_keys(array_map(
                                     fn (array $plugin) => strtolower($plugin['filename']),
@@ -1149,74 +1272,102 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     usort($projects, fn (array $left, array $right) => strcasecmp((string) ($left['title'] ?? ''), (string) ($right['title'] ?? '')));
 
                     if ($this->updatesOnly) {
-                        $projects = array_values(array_filter($projects, function (array $project): bool {
-                            if (empty($project['project_id'])) {
-                                return false;
-                            }
-
-                            $installedPlugin = $this->getInstalledMod($project['project_id']);
-                            $versions = $this->getCachedVersions($project['project_id']);
-
-                            return $installedPlugin !== null
-                                && isset($versions[0]['id'])
-                                && $installedPlugin['version_id'] !== $versions[0]['id'];
-                        }));
+                        $projects = array_values(array_filter(
+                            $projects,
+                            fn (array $project): bool => in_array(
+                                (string) ($project['project_id'] ?? ''),
+                                $this->availableUpdateProjectIds,
+                                true
+                            )
+                        ));
                     }
 
                     $totalCount = count($projects);
+                    $lastPage = max(1, (int) ceil($totalCount / $perPage));
+                    // The Updates view can contain far fewer rows than the
+                    // Installed view. Keep a stale `page` query parameter
+                    // from making a non-empty filtered result look empty.
+                    $page = min(max(1, $page), $lastPage);
                     $offset = ($page - 1) * $perPage;
                     $pagedProjects = array_slice($projects, $offset, $perPage);
 
                     return new LengthAwarePaginator($pagedProjects, $totalCount, $perPage, $page);
                 } else {
-                    $response = MinecraftModrinth::getModrinthProjects($server, $page, $search, static::detectProjectType($server));
+                    $response = $this->source === 'hangar'
+                        ? app(HangarService::class)->getProjects($server, $page, $search)
+                        : MinecraftModrinth::getModrinthProjects($server, $page, $search, static::detectProjectType($server));
                     return new LengthAwarePaginator($response['hits'], $response['total_hits'], 20, $page);
                 }
             })
             ->paginated([20])
             ->columns([
-                ImageColumn::make('icon_url')
-                    ->label(''),
-                TextColumn::make('title')
-                    ->searchable()
-                    ->description(function (array $record): ?string {
-                        if ($record['not_on_modrinth'] ?? false) {
-                            return trans($record['unknown_source'] ?? false
-                                ? 'pelican-minecraft-plugins::strings.badges.unknown_source'
-                                : 'pelican-minecraft-plugins::strings.badges.not_tracked');
-                        }
+                Split::make([
+                    ImageColumn::make('icon_url')
+                        ->label('')
+                        ->imageSize(40)
+                        ->grow(false),
+                    Stack::make([
+                        TextColumn::make('title')
+                            ->label('')
+                            ->weight('bold')
+                            ->searchable()
+                            ->description(function (array $record): ?string {
+                                if ($record['not_on_modrinth'] ?? false) {
+                                    return trans($record['unknown_source'] ?? false
+                                        ? 'pelican-minecraft-plugins::strings.badges.unknown_source'
+                                        : 'pelican-minecraft-plugins::strings.badges.not_tracked');
+                                }
 
-                        $description = $record['description'] ?? null;
-                        if (!is_string($description)) {
-                            return null;
-                        }
+                                $description = $record['description'] ?? null;
+                                if (!is_string($description)) {
+                                    return null;
+                                }
 
-                        return (strlen($description) > 120) ? substr($description, 0, 120).'...' : $description;
-                    }),
-                TextColumn::make('provider')
-                    ->label(trans('pelican-minecraft-plugins::strings.page.source'))
-                    ->badge()
-                    ->formatStateUsing(fn (?string $state) => trans($state === 'modrinth'
-                        ? 'pelican-minecraft-plugins::strings.badges.source_modrinth'
-                        : 'pelican-minecraft-plugins::strings.badges.unknown_source'))
-                    ->color(fn (?string $state) => $state === 'modrinth' ? 'success' : 'gray')
-                    ->visible(fn (): bool => $this->activeTab === 'installed'),
-                TextColumn::make('author')
-                    ->url(fn ($state) => $state ? "https://modrinth.com/user/{$state}" : null, true)
-                    ->toggleable(),
-                TextColumn::make('downloads')
-                    ->icon('tabler-download')
-                    ->numeric()
-                    ->toggleable(),
-                TextColumn::make('date_modified')
-                    ->icon('tabler-calendar')
-                    ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
-                    ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
-                    ->toggleable(),
+                                return (strlen($description) > 95) ? substr($description, 0, 95).'...' : $description;
+                            }),
+                    ]),
+                    TextColumn::make('provider')
+                        ->label('')
+                        ->badge()
+                        ->formatStateUsing(fn (?string $state) => trans(match ($state) {
+                            'hangar' => 'pelican-minecraft-plugins::strings.badges.source_hangar',
+                            'modrinth' => 'pelican-minecraft-plugins::strings.badges.source_modrinth',
+                            default => 'pelican-minecraft-plugins::strings.badges.unknown_source',
+                        }))
+                        ->color(fn (?string $state) => match ($state) {
+                            'hangar' => 'info',
+                            'modrinth' => 'success',
+                            default => 'gray',
+                        })
+                        ->visible(fn (): bool => $this->activeTab === 'installed')
+                        ->grow(false),
+                    TextColumn::make('downloads')
+                        ->label('')
+                        ->icon('tabler-download')
+                        ->numeric()
+                        ->alignEnd()
+                        ->width('8rem')
+                        ->visible(fn (): bool => $this->activeTab !== 'installed')
+                        ->grow(false),
+                    TextColumn::make('date_modified')
+                        ->label('')
+                        ->icon('tabler-calendar')
+                        ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
+                        ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
+                        ->width('8rem')
+                        ->visible(fn (): bool => $this->activeTab === 'installed')
+                        ->grow(false),
+                ])->from('md'),
             ])
             ->recordUrl(function (array $record) {
                 if (!empty($record['unavailable']) || ($record['not_on_modrinth'] ?? false)) {
                     return null;
+                }
+
+                if (($record['provider'] ?? $this->source) === 'hangar') {
+                    $path = $record['hangar_path'] ?? trim(($record['author'] ?? '').'/'.($record['slug'] ?? ''), '/');
+
+                    return $path !== '' ? "https://hangar.papermc.io/{$path}" : null;
                 }
 
                 /** @var Server $server */
@@ -1228,7 +1379,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->recordActions([
                 Action::make('versions')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-list')
                     ->color('info')
                     ->tooltip(trans('pelican-minecraft-plugins::strings.actions.versions'))
@@ -1304,6 +1454,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                                             $this->installedPluginsMetadata = null;
                                             $this->versionsCache = [];
+                                            $this->availableUpdatesComputed = false;
                                             $this->js('$wire.$refresh()');
 
                                             Notification::make()
@@ -1319,6 +1470,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                                             $this->installedPluginsMetadata = null;
                                             $this->versionsCache = [];
+                                            $this->availableUpdatesComputed = false;
                                             $this->js('$wire.$refresh()');
 
                                             Notification::make()
@@ -1349,7 +1501,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('install_latest')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-plugins::strings.actions.install_latest'))
@@ -1394,6 +1545,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
+                            $this->availableUpdatesComputed = false;
                             $this->resetPage();
                             $this->js('$wire.$refresh()');
 
@@ -1410,6 +1562,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
+                            $this->availableUpdatesComputed = false;
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-plugins::strings.notifications.install_failed'))
@@ -1420,7 +1573,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('update')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-refresh')
                     ->color('warning')
                     ->tooltip(trans('pelican-minecraft-plugins::strings.actions.update'))
@@ -1471,6 +1623,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
+                            $this->availableUpdatesComputed = false;
                             $this->resetPage();
                             $this->js('$wire.$refresh()');
 
@@ -1486,6 +1639,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
+                            $this->availableUpdatesComputed = false;
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-plugins::strings.notifications.update_failed'))
@@ -1496,7 +1650,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('installed')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-check')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-plugins::strings.actions.installed'))
@@ -1523,7 +1676,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('uninstall')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-trash')
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-plugins::strings.actions.uninstall'))
@@ -1588,6 +1740,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             } else {
                                 $this->installedPluginsMetadata = null;
                                 $this->versionsCache = [];
+                                $this->availableUpdatesComputed = false;
                             }
 
                             if ($this->activeTab === 'installed') {
@@ -1606,6 +1759,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->installedPluginsMetadata = null;
                             $this->versionsCache = [];
+                            $this->availableUpdatesComputed = false;
 
                             if ($this->activeTab === 'installed') {
                                 $this->js('$wire.$refresh()');
@@ -1619,79 +1773,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         }
                     }),
             ]);
-    }
-
-    protected function getHeaderActions(): array
-    {
-        /** @var Server $server */
-        $server = Filament::getTenant();
-
-        $type = static::detectProjectType($server);
-        if (!$type) {
-            return [];
-        }
-
-        /** @var DaemonFileRepository $fileRepository */
-        $fileRepository = app(DaemonFileRepository::class);
-        $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
-
-        $actions = [];
-
-        $actions = array_merge($actions, [
-            Action::make('open_folder')
-                ->tooltip(fn () => trans('pelican-minecraft-plugins::strings.page.open_folder', ['folder' => $folder]))
-                ->icon('tabler-folder-open')
-                ->url(fn () => ListFiles::getUrl(['path' => $folder]), true),
-            Action::make('update_all')
-                ->label(trans('pelican-minecraft-plugins::strings.actions.update_all_plugins'))
-                ->icon('tabler-download')
-                ->color('warning')
-                ->requiresConfirmation()
-                ->action(function (DaemonFileRepository $fileRepository) use ($server) {
-                    $result = $this->performBulkUpdate($server, $fileRepository);
-
-                    if ($result['updated'] === 0 && $result['failed'] === 0) {
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_none'))
-                            ->info()
-                            ->send();
-
-                        return;
-                    }
-
-                    if ($result['failed'] > 0) {
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_partial', [
-                                'updated' => $result['updated'],
-                                'failed' => $result['failed'],
-                            ]))
-                            ->warning()
-                            ->send();
-
-                        return;
-                    }
-
-                    Notification::make()
-                        ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_success', [
-                            'count' => $result['updated'],
-                        ]))
-                        ->success()
-                        ->send();
-                })
-                ->visible(fn () => static::detectProjectType($server) !== null),
-            Action::make('scan_plugins')
-                ->label(trans('pelican-minecraft-plugins::strings.actions.scan'))
-                ->tooltip(trans('pelican-minecraft-plugins::strings.actions.rescan_plugins_for_updates'))
-                ->icon('tabler-search')
-                ->action(function () use ($server, $type) {
-                    $this->clearPluginSourceDetectionCache($server);
-                    Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
-                    $this->redirect(static::getUrl());
-                })
-                ->visible(fn () => static::detectProjectType($server) !== null),
-        ]);
-
-        return $actions;
     }
 
     public function content(Schema $schema): Schema
@@ -1731,11 +1812,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 : 'pending');
         $installedCount = 0;
         try {
-            $availableUpdatesCount = $this->getAvailableUpdatesCount();
+            $this->availableUpdatesCount = $this->getAvailableUpdatesCount();
         } catch (\Throwable $exception) {
             report($exception);
-            $availableUpdatesCount = 0;
+            $this->availableUpdatesCount = 0;
         }
+        $availableUpdatesCount = $this->availableUpdatesCount;
         $pluginFolder = $type?->getFolder($server) ?? 'plugins';
 
         try {
@@ -1751,44 +1833,180 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             report($exception);
         }
 
+        $managerViewData = [
+            'server' => $server,
+            'type' => $type,
+            'loader' => $loader,
+            'minecraftVersion' => $minecraftVersion,
+            'installedCount' => $installedCount,
+            'availableUpdatesCount' => $availableUpdatesCount,
+            'activeTab' => $this->activeTab,
+            'source' => $this->source,
+            'updatesOnly' => $this->updatesOnly,
+            'serverStatus' => $serverStatus,
+            'serverOnline' => $serverOnline,
+            'serverStatusTone' => $serverStatusTone,
+        ];
+
         return $schema
             ->components([
                 View::make('pelican-minecraft-plugins::filament.server.plugin-manager')
-                    ->viewData([
-                        'server' => $server,
-                        'type' => $type,
-                        'loader' => $loader,
-                        'minecraftVersion' => $minecraftVersion,
-                        'installedCount' => $installedCount,
-                        'availableUpdatesCount' => $availableUpdatesCount,
-                        'activeTab' => $this->activeTab,
-                        'updatesOnly' => $this->updatesOnly,
-                        'serverStatus' => $serverStatus,
-                        'serverOnline' => $serverOnline,
-                        'serverStatusTone' => $serverStatusTone,
-                    ])
+                    ->viewData($managerViewData)
                     ->columnSpanFull(),
-                Grid::make(3)
+                View::make('pelican-minecraft-plugins::filament.server.plugin-manager-tabs')
+                    ->viewData($managerViewData)
+                    ->columnSpanFull(),
+                Grid::make(['default' => 1, 'md' => 2])
                     ->schema([
+                        Section::make('Modrinth')
+                            ->description('Plugins and mods')
+                            ->icon('mcbrand-modrinth')
+                            ->iconColor('success')
+                            ->headerActions($this->source === 'modrinth' ? [
+                                Action::make('active_modrinth_source')
+                                    ->label(trans('pelican-minecraft-plugins::strings.page.source_selected'))
+                                    ->icon('tabler-check')
+                                    ->color('success')
+                                    ->disabled()
+                                    ->button(),
+                            ] : [])
+                            ->extraAttributes([
+                                'wire:click' => "switchSource('modrinth')",
+                                'class' => 'cursor-pointer '.($this->source === 'modrinth' ? 'ring-2 ring-primary-500' : ''),
+                            ]),
+                        Section::make(new HtmlString('<span class="inline-flex items-center gap-2"><img src="https://hangar.papermc.io/_nuxt/hangar-logo.DNKyJEtq.svg" alt="" width="20" height="20" class="object-contain">Hangar</span>'))
+                            ->description('Paper / Velocity plugins')
+                            ->headerActions($this->source === 'hangar' ? [
+                                Action::make('active_hangar_source')
+                                    ->label(trans('pelican-minecraft-plugins::strings.page.source_selected'))
+                                    ->icon('tabler-check')
+                                    ->color('success')
+                                    ->disabled()
+                                    ->button(),
+                            ] : [])
+                            ->extraAttributes([
+                                'wire:click' => "switchSource('hangar')",
+                                'class' => 'cursor-pointer '.($this->source === 'hangar' ? 'ring-2 ring-primary-500' : ''),
+                            ]),
+                    ])
+                    ->visible(static::detectProjectType($server) === ModrinthProjectType::Plugin)
+                    ->columnSpanFull(),
+                View::make('pelican-minecraft-plugins::filament.server.plugin-manager-filters')
+                    ->viewData($managerViewData)
+                    ->columnSpanFull(),
+                Grid::make(['default' => 1, 'xl' => 3])
+                    ->schema([
+                        EmbeddedTable::make()
+                            ->columnSpan(['default' => 1, 'xl' => 2]),
                         Grid::make(1)
                             ->schema([
-                                EmbeddedTable::make(),
+                                Section::make(trans('pelican-minecraft-plugins::strings.page.server_information'))
+                                    ->icon('tabler-server-2')
+                                    ->schema([
+                                        TextEntry::make('server_name')
+                                            ->label('')
+                                            ->state($server->name)
+                                            ->weight('bold'),
+                                        TextEntry::make('server_type')
+                                            ->label('')
+                                            ->state(($loader?->getLabel() ?? trans('pelican-minecraft-plugins::strings.page.unknown')).' · '.($minecraftVersion ?? trans('pelican-minecraft-plugins::strings.page.unknown'))),
+                                        TextEntry::make('server_status')
+                                            ->label('')
+                                            ->state($serverStatus)
+                                            ->badge()
+                                            ->color(match ($serverStatusTone) {
+                                                'online' => 'success',
+                                                'offline' => 'danger',
+                                                default => 'warning',
+                                            }),
+                                    ]),
+                                Section::make(trans('pelican-minecraft-plugins::strings.page.quick_actions'))
+                                    ->icon('tabler-bolt')
+                                    ->schema([
+                                        Actions::make([
+                                            Action::make('update_all')
+                                                ->label(trans('pelican-minecraft-plugins::strings.actions.update_all_plugins'))
+                                                ->icon('tabler-refresh')
+                                                ->color('warning')
+                                                ->button()
+                                                ->requiresConfirmation()
+                                                ->action(function (DaemonFileRepository $fileRepository) use ($server): void {
+                                                    $result = $this->performBulkUpdate($server, $fileRepository);
+
+                                                    if ($result['updated'] === 0 && $result['failed'] === 0) {
+                                                        Notification::make()
+                                                            ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_none'))
+                                                            ->info()
+                                                            ->send();
+
+                                                        return;
+                                                    }
+
+                                                    if ($result['failed'] > 0) {
+                                                        Notification::make()
+                                                            ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_partial', [
+                                                                'updated' => $result['updated'],
+                                                                'failed' => $result['failed'],
+                                                            ]))
+                                                            ->warning()
+                                                            ->send();
+
+                                                        return;
+                                                    }
+
+                                                    Notification::make()
+                                                        ->title(trans('pelican-minecraft-plugins::strings.notifications.bulk_update_success', [
+                                                            'count' => $result['updated'],
+                                                        ]))
+                                                        ->success()
+                                                        ->send();
+                                                }),
+                                        ])->fullWidth(),
+                                        Actions::make([
+                                            Action::make('scan_plugins')
+                                                ->label(trans('pelican-minecraft-plugins::strings.actions.scan'))
+                                                ->icon('tabler-search')
+                                                ->color('gray')
+                                                ->button()
+                                                ->action(function () use ($server, $type): void {
+                                                    $this->clearPluginSourceDetectionCache($server);
+                                                    Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
+                                                    $this->redirect(static::getUrl());
+                                                }),
+                                        ])->fullWidth(),
+                                        Actions::make([
+                                            Action::make('open_plugin_folder')
+                                                ->label(trans('pelican-minecraft-plugins::strings.page.open_folder', ['folder' => $pluginFolder]))
+                                                ->icon('tabler-folder')
+                                                ->color('gray')
+                                                ->button()
+                                                ->url(fn () => ListFiles::getUrl(['path' => $pluginFolder]), true),
+                                        ])->fullWidth(),
+                                    ]),
+                                Section::make(trans('pelican-minecraft-plugins::strings.page.statistics'))
+                                    ->icon('tabler-chart-bar')
+                                    ->schema([
+                                        TextEntry::make('total_plugins')
+                                            ->label(trans('pelican-minecraft-plugins::strings.page.total_plugins'))
+                                            ->state($installedCount)
+                                            ->inlineLabel()
+                                            ->badge()
+                                            ->color('success'),
+                                        TextEntry::make('available_updates')
+                                            ->label(trans('pelican-minecraft-plugins::strings.page.available_updates'))
+                                            ->state($availableUpdatesCount)
+                                            ->inlineLabel()
+                                            ->badge()
+                                            ->color('info'),
+                                        TextEntry::make('supported_sources')
+                                            ->label(trans('pelican-minecraft-plugins::strings.page.supported_sources'))
+                                            ->state(static::detectProjectType($server) === ModrinthProjectType::Plugin ? 2 : 1)
+                                            ->inlineLabel()
+                                            ->badge()
+                                            ->color('gray'),
+                                    ]),
                             ])
-                            ->columnSpan(2),
-                        View::make('pelican-minecraft-plugins::filament.server.plugin-manager-sidebar')
-                            ->viewData([
-                                'server' => $server,
-                                'type' => $type,
-                                'loader' => $loader,
-                                'minecraftVersion' => $minecraftVersion,
-                                'installedCount' => $installedCount,
-                                'availableUpdatesCount' => $availableUpdatesCount,
-                                'pluginFolder' => $pluginFolder,
-                                'serverStatus' => $serverStatus,
-                                'serverOnline' => $serverOnline,
-                                'serverStatusTone' => $serverStatusTone,
-                            ])
-                            ->columnSpan(1),
+                            ->columnSpan(['default' => 1, 'xl' => 1]),
                     ])
                     ->columnSpanFull(),
             ]);

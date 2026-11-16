@@ -16,6 +16,7 @@ return [
         'manager_subtitle' => 'Pluginok keresése, telepítése, frissítése és kezelése közvetlenül a Pelican Panelből.',
         'sources' => 'Pluginforrások',
         'source' => 'Forrás',
+        'source_selected' => 'Kiválasztva',
         'version' => 'Verzió',
         'server_type' => 'Szervertípus',
         'server_information' => 'Szerverinformáció',
@@ -23,6 +24,7 @@ return [
         'total_plugins' => 'Összes plugin',
         'available_updates' => 'Elérhető frissítések',
         'supported_sources' => 'Támogatott források',
+        'statistics' => 'Pluginstatisztika',
         'open_plugin_folder' => 'Pluginmappa megnyitása',
         'modrinth_description' => 'Minecraft pluginok',
         'open_folder' => ':folder mappa megnyitása',
@@ -70,6 +72,7 @@ return [
         'not_tracked' => 'Nincs követve ezen a forráson',
         'unknown_source' => 'A forrás nem azonosítható',
         'source_modrinth' => 'Modrinth',
+        'source_hangar' => 'Hangar',
     ],
 
     'modals' => [
