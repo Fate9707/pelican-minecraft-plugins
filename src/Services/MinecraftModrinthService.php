@@ -240,6 +240,14 @@ class MinecraftModrinthService
             }
         }
 
+        $hangarSlugs = array_values(array_filter(array_map(
+            fn (string $projectId) => str_starts_with($projectId, 'hangar:') ? substr($projectId, 7) : null,
+            $pageIds
+        )));
+        $hangarMap = $hangarSlugs !== []
+            ? app(HangarService::class)->getProjectsBySlugs($hangarSlugs)
+            : [];
+
         $results = [];
         foreach ($pageIds as $projectId) {
             $installedPlugin = null;
@@ -265,20 +273,26 @@ class MinecraftModrinthService
                     $project['author'] = $installedPlugin['author'];
                 }
                 $results[] = $project;
+            } elseif (isset($hangarMap[$projectId])) {
+                $project = $hangarMap[$projectId];
+                $project['project_id'] = $projectId;
+                $project['provider'] = 'hangar';
+                $results[] = $project;
             } else {
                 $isHangar = str_starts_with((string) $projectId, 'hangar:');
+                $isSpigot = str_starts_with((string) $projectId, 'spigot:');
                 $results[] = [
                     'project_id' => $installedPlugin['project_id'],
                     'slug' => $installedPlugin['project_slug'],
                     'title' => $installedPlugin['project_title'],
-                    'description' => $isHangar ? null : trans('pelican-minecraft-plugins::strings.page.plugin_unavailable'),
+                    'description' => ($isHangar || $isSpigot) ? null : trans('pelican-minecraft-plugins::strings.page.plugin_unavailable'),
                     'icon_url' => null,
                     'author' => $installedPlugin['author'] ?? '',
                     'downloads' => 0,
                     'date_modified' => $installedPlugin['installed_at'],
                     'project_type' => '',
-                    'unavailable' => !$isHangar,
-                    'provider' => $isHangar ? 'hangar' : 'modrinth',
+                    'unavailable' => !($isHangar || $isSpigot),
+                    'provider' => $isHangar ? 'hangar' : ($isSpigot ? 'spigot' : 'modrinth'),
                     'hangar_path' => $isHangar
                         ? trim(($installedPlugin['author'] ?? '').'/'.$installedPlugin['project_slug'], '/')
                         : null,

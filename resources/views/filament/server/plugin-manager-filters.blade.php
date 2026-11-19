@@ -8,9 +8,9 @@
         {{ $loader?->getLabel() ?? trans('pelican-minecraft-plugins::strings.page.unknown') }}
     </x-filament::badge>
     @if ($activeTab !== 'installed')
-        <x-filament::badge :color="$source === 'hangar' ? 'info' : 'success'">
+        <x-filament::badge :color="match ($source) { 'hangar' => 'info', 'spigot' => 'warning', default => 'success' }">
             {{ trans('pelican-minecraft-plugins::strings.page.source') }}:
-            {{ $source === 'hangar' ? 'Hangar' : 'Modrinth' }}
+            {{ match ($source) { 'hangar' => 'Hangar', 'spigot' => 'Spigot', default => 'Modrinth' } }}
         </x-filament::badge>
     @endif
 </x-filament::section>

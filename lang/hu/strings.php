@@ -73,6 +73,7 @@ return [
         'unknown_source' => 'A forrás nem azonosítható',
         'source_modrinth' => 'Modrinth',
         'source_hangar' => 'Hangar',
+        'source_spigot' => 'Spigot',
     ],
 
     'modals' => [

@@ -73,6 +73,7 @@ return [
         'unknown_source' => 'Quelle konnte nicht erkannt werden',
         'source_modrinth' => 'Modrinth',
         'source_hangar' => 'Hangar',
+        'source_spigot' => 'Spigot',
     ],
 
     'modals' => [

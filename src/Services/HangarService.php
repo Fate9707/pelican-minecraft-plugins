@@ -60,6 +60,56 @@ class HangarService
         });
     }
 
+    /** @param array<int, string> $projectSlugs
+     *  @return array<string, array<string, mixed>> keyed by Hangar project ID
+     */
+    public function getProjectsBySlugs(array $projectSlugs): array
+    {
+        $projectSlugs = array_values(array_unique(array_filter(
+            $projectSlugs,
+            fn ($slug) => is_string($slug) && trim($slug) !== ''
+        )));
+        $missingSlugs = array_values(array_filter(
+            $projectSlugs,
+            fn (string $slug) => !cache()->has('hangar_project_details:v1:'.md5($slug))
+        ));
+
+        foreach (array_chunk($missingSlugs, 4) as $batch) {
+            try {
+                $responses = Http::pool(fn ($pool) => array_map(
+                    fn (string $slug) => $pool->as(md5($slug))
+                        ->acceptJson()
+                        ->withUserAgent('pelican-minecraft-plugins')
+                        ->timeout(10)
+                        ->connectTimeout(5)
+                        ->get('https://hangar.papermc.io/api/v1/projects/'.rawurlencode($slug)),
+                    $batch
+                ));
+
+                foreach ($batch as $slug) {
+                    $response = $responses[md5($slug)] ?? null;
+                    $project = $response && $response->successful() && is_array($response->json())
+                        ? $response->json()
+                        : null;
+                    cache()->put('hangar_project_details:v1:'.md5($slug), $project, now()->addMinutes(30));
+                }
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        $projects = [];
+        foreach ($projectSlugs as $slug) {
+            $project = cache()->get('hangar_project_details:v1:'.md5($slug));
+            if (is_array($project) && !empty($project['name'])) {
+                $normalized = $this->normalizeProject($project);
+                $projects[$normalized['project_id']] = $normalized;
+            }
+        }
+
+        return $projects;
+    }
+
     private function normalizeProjectName(string $name): string
     {
         return preg_replace('/[^a-z0-9]+/', '', strtolower($name)) ?? '';
